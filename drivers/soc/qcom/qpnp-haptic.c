@@ -27,8 +27,6 @@
 #include <linux/qpnp/pwm.h>
 #include <linux/err.h>
 #include <linux/delay.h>
-#include <linux/log2.h>
-#include <linux/qpnp-misc.h>
 #include <linux/qpnp/qpnp-haptic.h>
 #include <linux/qpnp/qpnp-revid.h>
 #include "../../staging/android/timed_output.h"
@@ -38,10 +36,9 @@
 #define QPNP_HAP_LRA_AUTO_RES_HI(b)     (b + 0x0C)
 #define QPNP_HAP_EN_CTL_REG(b)		(b + 0x46)
 #define QPNP_HAP_EN_CTL2_REG(b)		(b + 0x48)
-#define QPNP_HAP_AUTO_RES_CTRL(b)	(b + 0x4B)
-#define QPNP_HAP_CFG1_REG(b)		(b + 0x4C)
-#define QPNP_HAP_CFG2_REG(b)		(b + 0x4D)
-#define QPNP_HAP_SEL_REG(b)		(b + 0x4E)
+#define QPNP_HAP_ACT_TYPE_REG(b)	(b + 0x4C)
+#define QPNP_HAP_WAV_SHAPE_REG(b)	(b + 0x4D)
+#define QPNP_HAP_PLAY_MODE_REG(b)	(b + 0x4E)
 #define QPNP_HAP_LRA_AUTO_RES_REG(b)	(b + 0x4F)
 #define QPNP_HAP_VMAX_REG(b)		(b + 0x51)
 #define QPNP_HAP_ILIM_REG(b)		(b + 0x52)
@@ -64,28 +61,16 @@
 #define QPNP_HAP_ACT_TYPE_MASK		BIT(0)
 #define QPNP_HAP_LRA			0x0
 #define QPNP_HAP_ERM			0x1
-#define QPNP_HAP_PM660_HW_AUTO_RES_MODE_BIT	BIT(3)
-#define QPNP_HAP_AUTO_RES_MODE_MASK	GENMASK(6, 4)
+#define QPNP_HAP_AUTO_RES_MODE_MASK	0x8F
 #define QPNP_HAP_AUTO_RES_MODE_SHIFT	4
-#define QPNP_HAP_PM660_AUTO_RES_MODE_BIT	BIT(7)
-#define QPNP_HAP_PM660_AUTO_RES_MODE_SHIFT	7
-#define QPNP_HAP_PM660_CALIBRATE_DURATION_MASK	GENMASK(6, 5)
-#define QPNP_HAP_PM660_CALIBRATE_DURATION_SHIFT	5
-#define QPNP_HAP_PM660_QWD_DRIVE_DURATION_BIT	BIT(4)
-#define QPNP_HAP_PM660_QWD_DRIVE_DURATION_SHIFT	4
-#define QPNP_HAP_PM660_CALIBRATE_AT_EOP_BIT	BIT(3)
-#define QPNP_HAP_PM660_CALIBRATE_AT_EOP_SHIFT	3
-#define QPNP_HAP_PM660_LRA_ZXD_CAL_PERIOD_BIT	GENMASK(2, 0)
-#define QPNP_HAP_LRA_HIGH_Z_MASK		GENMASK(3, 2)
-#define QPNP_HAP_LRA_HIGH_Z_SHIFT		2
-#define QPNP_HAP_LRA_RES_CAL_PER_MASK		GENMASK(1, 0)
-#define QPNP_HAP_PM660_LRA_RES_CAL_PER_MASK	GENMASK(2, 0)
-#define QPNP_HAP_RES_CAL_PERIOD_MIN		4
-#define QPNP_HAP_RES_CAL_PERIOD_MAX		32
-#define QPNP_HAP_PM660_RES_CAL_PERIOD_MAX	256
-#define QPNP_HAP_WF_SOURCE_MASK		GENMASK(5, 4)
-#define QPNP_HAP_WF_SOURCE_SHIFT	4
-#define QPNP_HAP_VMAX_MASK		GENMASK(5, 1)
+#define QPNP_HAP_LRA_HIGH_Z_MASK	0xF3
+#define QPNP_HAP_LRA_HIGH_Z_SHIFT	2
+#define QPNP_HAP_LRA_RES_CAL_PER_MASK	0xFC
+#define QPNP_HAP_RES_CAL_PERIOD_MIN	4
+#define QPNP_HAP_RES_CAL_PERIOD_MAX	32
+#define QPNP_HAP_PLAY_MODE_MASK		0xCF
+#define QPNP_HAP_PLAY_MODE_SHFT		4
+#define QPNP_HAP_VMAX_MASK		0xC1
 #define QPNP_HAP_VMAX_SHIFT		1
 #define QPNP_HAP_VMAX_MIN_MV		116
 #define QPNP_HAP_VMAX_MAX_MV		3596
@@ -139,9 +124,11 @@
 #define QPNP_HAP_BRAKE_PAT_LEN		4
 #define QPNP_HAP_PLAY_EN		0x80
 #define QPNP_HAP_EN			0x80
-#define QPNP_HAP_BRAKE_MASK		BIT(0)
-#define QPNP_HAP_AUTO_RES_MASK		BIT(7)
-#define AUTO_RES_ENABLE			BIT(7)
+#define QPNP_HAP_BRAKE_MASK		0xFE
+#define QPNP_HAP_TEST2_AUTO_RES_MASK	0x7F
+#define QPNP_HAP_SEC_UNLOCK		0xA5
+#define AUTO_RES_ENABLE			0x80
+#define AUTO_RES_DISABLE		0x00
 #define AUTO_RES_ERR_BIT		0x10
 #define SC_FOUND_BIT			0x08
 #define SC_MAX_DURATION			5
@@ -152,25 +139,19 @@
 #define QPNP_HAP_CYCLS			5
 #define QPNP_TEST_TIMER_MS		5
 
-#define QPNP_HAP_TIME_REQ_FOR_BACK_EMF_GEN	20000
-#define POLL_TIME_AUTO_RES_ERR_NS	(20 * NSEC_PER_MSEC)
+#define AUTO_RES_ENABLE_TIMEOUT		20000
+#define AUTO_RES_ERR_CAPTURE_RES	5
+#define AUTO_RES_ERR_MAX		15
 
-#define MAX_POSITIVE_VARIATION_LRA_FREQ 30
-#define MAX_NEGATIVE_VARIATION_LRA_FREQ -30
-#define FREQ_VARIATION_STEP		5
-#define AUTO_RES_ERROR_CAPTURE_RES	5
-#define AUTO_RES_ERROR_MAX		30
-#define ADJUSTED_LRA_PLAY_RATE_CODE_ARRSIZE \
-	((MAX_POSITIVE_VARIATION_LRA_FREQ - MAX_NEGATIVE_VARIATION_LRA_FREQ) \
-	 / FREQ_VARIATION_STEP)
-#define LRA_DRIVE_PERIOD_POS_ERR(hap, rc_clk_err_percent) \
-	(hap->init_drive_period_code = (hap->init_drive_period_code * \
-		(1000 + rc_clk_err_percent_x10)) / 1000)
-#define LRA_DRIVE_PERIOD_NEG_ERR(hap, rc_clk_err_percent) \
-	(hap->init_drive_period_code = (hap->init_drive_period_code * \
-		(1000 - rc_clk_err_percent_x10)) / 1000)
+#define MISC_TRIM_ERROR_RC19P2_CLK	0x09F5
+#define MISC_SEC_ACCESS			0x09D0
+#define MISC_SEC_UNLOCK			0xA5
+#define PMI8950_MISC_SID		2
 
-u32 adjusted_lra_play_rate_code[ADJUSTED_LRA_PLAY_RATE_CODE_ARRSIZE];
+#define POLL_TIME_AUTO_RES_ERR_NS	(5 * NSEC_PER_MSEC)
+
+#define LRA_POS_FREQ_COUNT		6
+int lra_play_rate_code[LRA_POS_FREQ_COUNT];
 
 /* haptic debug register set */
 static u8 qpnp_hap_dbg_regs[] = {
@@ -227,14 +208,9 @@ enum qpnp_hap_auto_res_mode {
 	QPNP_HAP_AUTO_RES_ZXD_EOP,
 };
 
-enum qpnp_hap_pm660_auto_res_mode {
-	QPNP_HAP_PM660_AUTO_RES_ZXD,
-	QPNP_HAP_PM660_AUTO_RES_QWD,
-};
-
 /* high Z option lines */
 enum qpnp_hap_high_z {
-	QPNP_HAP_LRA_HIGH_Z_NONE, /* opt0 for PM660 */
+	QPNP_HAP_LRA_HIGH_Z_NONE,
 	QPNP_HAP_LRA_HIGH_Z_OPT1,
 	QPNP_HAP_LRA_HIGH_Z_OPT2,
 	QPNP_HAP_LRA_HIGH_Z_OPT3,
@@ -246,11 +222,6 @@ enum qpnp_hap_mode {
 	QPNP_HAP_BUFFER,
 	QPNP_HAP_AUDIO,
 	QPNP_HAP_PWM,
-};
-
-/* status flags */
-enum qpnp_hap_status {
-	AUTO_RESONANCE_ENABLED = BIT(0),
 };
 
 /* pwm channel info */
@@ -268,26 +239,15 @@ struct qpnp_pwm_info {
  *  @ auto_res_err_poll_timer - hrtimer for auto-resonance error
  *  @ timed_dev - timed output device
  *  @ work - worker
+ *  @ auto_res_err_work - correct auto resonance error
  *  @ sc_work - worker to handle short circuit condition
  *  @ pwm_info - pwm info
  *  @ lock - mutex lock
  *  @ wf_lock - mutex lock for waveform
- *  @ init_drive_period_code - the initial lra drive period code
- *  @ drive_period_code_max_limit_percent_variation - maximum limit of
-      percentage variation of drive period code
- *  @ drive_period_code_min_limit_percent_variation - minimum limit og
-      percentage variation of drive period code
- *  @ drive_period_code_max_limit - calculated drive period code with
-      percentage variation on the higher side.
- *  @ drive_period_code_min_limit - calculated drive period code with
-      percentage variation on the lower side
- *  @ lra_res_cal_period - LRA resonance calibration period
  *  @ play_mode - play mode
  *  @ auto_res_mode - auto resonace mode
  *  @ lra_high_z - high z option line
  *  @ timeout_ms - max timeout in ms
- *  @ time_required_to_generate_back_emf_us - the time required for sufficient
-      back-emf to be generated for auto resonance to be successful
  *  @ vmax_mv - max voltage in mv
  *  @ ilim_ma - limiting current in ma
  *  @ sc_deb_cycles - short circuit debounce cycles
@@ -298,7 +258,6 @@ struct qpnp_pwm_info {
  *  @ wave_s_rep_cnt - waveform sample repeat count
  *  @ play_irq - irq for play
  *  @ sc_irq - irq for short circuit
- *  @ status_flags - status
  *  @ base - base address
  *  @ act_type - actuator type
  *  @ wave_shape - waveform shape
@@ -317,10 +276,7 @@ struct qpnp_pwm_info {
  *  @ en_brake - brake state
  *  @ sup_brake_pat - support custom brake pattern
  *  @ correct_lra_drive_freq - correct LRA Drive Frequency
- *  @ misc_clk_trim_error_reg - MISC clock trim error register if present
- *  @ clk_trim_error_code - MISC clock trim error code
- *  @ perform_lra_auto_resonance_search - whether lra auto resonance search
- *    algorithm should be performed or not.
+ *  @ misc_trim_error_rc19p2_clk_reg_present - if MISC Trim Error reg is present
  */
 struct qpnp_hap {
 	struct platform_device		*pdev;
@@ -330,6 +286,7 @@ struct qpnp_hap {
 	struct hrtimer			auto_res_err_poll_timer;
 	struct timed_output_dev		timed_dev;
 	struct work_struct		work;
+	struct work_struct		auto_res_err_work;
 	struct delayed_work		sc_work;
 	struct hrtimer			hap_test_timer;
 	struct work_struct		test_work;
@@ -339,14 +296,11 @@ struct qpnp_hap {
 	spinlock_t			bus_lock;
 	struct completion		completion;
 	enum qpnp_hap_mode		play_mode;
+	enum qpnp_hap_auto_res_mode	auto_res_mode;
 	enum qpnp_hap_high_z		lra_high_z;
-	int				lra_qwd_drive_duration;
-	int				calibrate_at_eop;
-	u32				misc_clk_trim_error_reg;
-	u32				init_drive_period_code;
 	u32				timeout_ms;
-	u32				time_required_to_generate_back_emf_us;
 	u32				vmax_mv;
+	u32				vmax_default_mv;
 	u32				ilim_ma;
 	u32				sc_deb_cycles;
 	u32				int_pwm_freq_khz;
@@ -356,27 +310,19 @@ struct qpnp_hap {
 	u32				wave_s_rep_cnt;
 	u32				play_irq;
 	u32				sc_irq;
-	u32				status_flags;
 	u16				base;
-	u16				drive_period_code_max_limit;
-	u16				drive_period_code_min_limit;
-	u16				lra_res_cal_period;
-	u8			drive_period_code_max_limit_percent_variation;
-	u8			drive_period_code_min_limit_percent_variation;
 	u8				act_type;
 	u8				wave_shape;
 	u8				wave_samp[QPNP_HAP_WAV_SAMP_LEN];
+	u8				wave_samp_overdrive[QPNP_HAP_WAV_SAMP_LEN];
+	u8				wave_samp_normal[QPNP_HAP_WAV_SAMP_LEN];
 	u8				shadow_wave_samp[QPNP_HAP_WAV_SAMP_LEN];
 	u8				brake_pat[QPNP_HAP_BRAKE_PAT_LEN];
 	u8				reg_en_ctl;
 	u8				reg_play;
+	u8				lra_res_cal_period;
 	u8				sc_duration;
 	u8				ext_pwm_dtest_line;
-	u8				pmic_subtype;
-	u8				auto_res_mode;
-	u8				clk_trim_error_code;
-	bool				lra_hw_auto_resonance;
-	bool				vcc_pon_enabled;
 	bool				state;
 	bool				manage_pon_supply;
 	bool				wf_update;
@@ -385,10 +331,17 @@ struct qpnp_hap {
 	bool				en_brake;
 	bool				sup_brake_pat;
 	bool				correct_lra_drive_freq;
-	bool				perform_lra_auto_resonance_search;
+	bool				misc_trim_error_rc19p2_clk_reg_present;
+	int					resonant_frequency;
+	int					enable_time;
 };
 
 static struct qpnp_hap *ghap;
+/*wulaibin  2015-11-18 add begin for optimizing the response speed of the
+vibrator*/
+static struct workqueue_struct *vibqueue;
+/*wulaibin  2015-11-18 add end for optimizing the response speed of the
+vibrator*/
 
 /* helper to read a pmic register */
 static int qpnp_hap_read_reg(struct qpnp_hap *hap, u16 addr, u8 *val)
@@ -421,34 +374,7 @@ static int qpnp_hap_write_reg(struct qpnp_hap *hap, u16 addr, u8 val)
 }
 
 /* helper to access secure registers */
-#define QPNP_HAP_SEC_UNLOCK		0xA5
-static int qpnp_hap_sec_masked_write_reg(struct qpnp_hap *hap, u16 addr,
-					u8 mask, u8 val)
-{
-	unsigned long flags;
-	int rc;
-	u8 tmp = QPNP_HAP_SEC_UNLOCK;
-
-	spin_lock_irqsave(&hap->bus_lock, flags);
-	rc = regmap_write(hap->regmap, QPNP_HAP_SEC_ACCESS_REG(hap->base), tmp);
-	if (rc < 0) {
-		pr_err("Error writing sec_code - ret %X\n", rc);
-		goto out;
-	}
-
-	rc = regmap_update_bits(hap->regmap, addr, mask, val);
-	if (rc < 0)
-		pr_err("Error writing address: %X - ret %X\n", addr, rc);
-
-out:
-	spin_unlock_irqrestore(&hap->bus_lock, flags);
-	if (!rc)
-		pr_debug("wrote: HAP_0x%x = 0x%x\n", addr, val);
-	return rc;
-}
-
-static int qpnp_hap_masked_write_reg(struct qpnp_hap *hap, u16 addr, u8 mask,
-					u8 val)
+static int qpnp_hap_sec_access(struct qpnp_hap *hap)
 {
 	unsigned long flags;
 	int rc;
@@ -483,6 +409,7 @@ static void qpnp_handle_sc_irq(struct work_struct *work)
 static int qpnp_hap_mod_enable(struct qpnp_hap *hap, int on)
 {
 	u8 val;
+	u8 data;
 	int rc, i;
 
 	val = hap->reg_en_ctl;
@@ -494,13 +421,13 @@ static int qpnp_hap_mod_enable(struct qpnp_hap *hap, int on)
 			unsigned long sleep_time =
 				QPNP_HAP_CYCLS * hap->wave_play_rate_us;
 
-			rc = qpnp_hap_read_reg(hap, QPNP_HAP_STATUS(hap->base),
-					&val);
+			rc = qpnp_hap_read_reg(hap, &data,
+				QPNP_HAP_STATUS(hap->base));
 
-			pr_debug("HAP_STATUS=0x%x\n", val);
+			dev_dbg(&hap->pdev->dev, "HAP_STATUS=0x%x\n", data);
 
 			/* wait for QPNP_HAP_CYCLS cycles of play rate */
-			if (val & QPNP_HAP_STATUS_BUSY) {
+			if (data & QPNP_HAP_STATUS_BUSY) {
 				usleep_range(sleep_time, sleep_time + 1);
 				if (hap->play_mode == QPNP_HAP_DIRECT ||
 					hap->play_mode == QPNP_HAP_PWM)
@@ -810,11 +737,16 @@ static int qpnp_hap_vmax_config(struct qpnp_hap *hap)
 	else if (hap->vmax_mv > QPNP_HAP_VMAX_MAX_MV)
 		hap->vmax_mv = QPNP_HAP_VMAX_MAX_MV;
 
-	val = (hap->vmax_mv / QPNP_HAP_VMAX_MIN_MV) << QPNP_HAP_VMAX_SHIFT;
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_VMAX_REG(hap->base),
-			QPNP_HAP_VMAX_MASK, val);
-	return rc;
-}
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_VMAX_MASK;
+	temp = hap->vmax_mv / QPNP_HAP_VMAX_MIN_MV;
+	reg |= (temp << QPNP_HAP_VMAX_SHIFT);
+
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
+	if (rc)
+		return rc;
 
 /* configuration api for ilim */
 static int qpnp_hap_ilim_config(struct qpnp_hap *hap)
@@ -880,8 +812,7 @@ static int qpnp_hap_int_pwm_config(struct qpnp_hap *hap)
 		val = 3;
 	}
 
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_INT_PWM_REG(hap->base),
-			QPNP_HAP_INT_PWM_MASK, val);
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_SC_DEB_REG(hap->base));
 	if (rc)
 		return rc;
 
@@ -926,6 +857,16 @@ static int qpnp_hap_parse_buffer_dt(struct qpnp_hap *hap)
 			hap->wave_samp[i] = QPNP_HAP_WAV_SAMP_MAX;
 	} else {
 		memcpy(hap->wave_samp, prop->value, QPNP_HAP_WAV_SAMP_LEN);
+		memcpy(hap->wave_samp_normal, prop->value, QPNP_HAP_WAV_SAMP_LEN);
+	}
+	prop = of_find_property(pdev->dev.of_node,
+			"qcom,wave-samples-overdrive", &temp);
+	if (!prop || temp != QPNP_HAP_WAV_SAMP_LEN) {
+		dev_err(&pdev->dev, "Invalid wave samples, use default");
+		for (i = 0; i < QPNP_HAP_WAV_SAMP_LEN; i++)
+			hap->wave_samp_overdrive[i] = QPNP_HAP_WAV_SAMP_MAX;
+	} else {
+		memcpy(hap->wave_samp_overdrive, prop->value, QPNP_HAP_WAV_SAMP_LEN);
 	}
 
 	return 0;
@@ -1077,6 +1018,18 @@ static ssize_t qpnp_hap_wf_samp_store(struct device *dev,
 	return count;
 }
 
+static int qpnp_hap_wf_samp_store_all(struct timed_output_dev *timed_dev,bool use_overdrive)
+{
+   struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
+                    timed_dev);
+   memcpy(hap->shadow_wave_samp, use_overdrive? hap->wave_samp_overdrive:hap->wave_samp_normal, QPNP_HAP_WAV_SAMP_LEN);
+   mutex_lock(&hap->wf_lock);
+   hap->wf_update = true;
+   mutex_unlock(&hap->wf_lock);
+
+   return 0;
+}
+
 static ssize_t qpnp_hap_wf_s0_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -1123,6 +1076,106 @@ static ssize_t qpnp_hap_wf_s7_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	return qpnp_hap_wf_samp_store(dev, buf, count, 7);
+}
+
+static ssize_t qpnp_hap_rf_hz_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	u8 lra_auto_res_lo = 0, lra_auto_res_hi = 0;
+	int temp;
+	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
+	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
+					 timed_dev);
+
+	qpnp_hap_read_reg(hap, &lra_auto_res_lo,
+				QPNP_HAP_RATE_CFG1_REG(hap->base));
+	qpnp_hap_read_reg(hap, &lra_auto_res_hi,
+				QPNP_HAP_RATE_CFG2_REG(hap->base));
+
+	temp = (lra_auto_res_hi << 8) | (lra_auto_res_lo & 0xff);
+
+	hap->resonant_frequency = ((19200/96)*1000)/temp;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", hap->resonant_frequency);
+}
+
+static ssize_t qpnp_hap_rf_hz_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	return count;
+}
+
+static ssize_t qpnp_hap_vmax_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	u8 reg = 0;
+	int rc;
+	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
+	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
+					 timed_dev);
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
+	reg = (reg >> QPNP_HAP_VMAX_SHIFT);
+
+	hap->vmax_mv = reg * QPNP_HAP_VMAX_MIN_MV;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", hap->vmax_mv);
+}
+
+static ssize_t qpnp_hap_vmax_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int data, rc, temp;
+	u8 reg;
+	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
+	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
+					 timed_dev);
+
+	if (sscanf(buf, "%d", &data) != 1)
+		return -EINVAL;
+
+	if (data < QPNP_HAP_VMAX_MIN_MV)
+		data = QPNP_HAP_VMAX_MIN_MV;
+	else if (data > QPNP_HAP_VMAX_MAX_MV)
+		data = QPNP_HAP_VMAX_MAX_MV;
+
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
+	if (rc < 0)
+		return rc;
+
+	reg &= QPNP_HAP_VMAX_MASK;
+	temp = data / QPNP_HAP_VMAX_MIN_MV;
+	reg |= (temp << QPNP_HAP_VMAX_SHIFT);
+
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
+
+	if (rc)
+		return rc;
+
+	hap->vmax_mv = data;
+
+	return count;
+}
+
+static ssize_t qpnp_hap_vmax_default(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
+	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
+					 timed_dev);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", hap->vmax_default_mv);
+}
+
+static ssize_t qpnp_hap_vmax_max(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", QPNP_HAP_VMAX_MAX_MV);
+}
+
+static ssize_t qpnp_hap_vmax_min(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", QPNP_HAP_VMAX_MIN_MV);
 }
 
 /* sysfs show for wave form update */
@@ -1416,6 +1469,13 @@ static ssize_t qpnp_hap_ramp_test_data_show(struct device *dev,
 
 /* sysfs attributes */
 static struct device_attribute qpnp_hap_attrs[] = {
+	__ATTR(rf_hz, (S_IRUGO | S_IWUSR | S_IWGRP),
+			qpnp_hap_rf_hz_show,
+			qpnp_hap_rf_hz_store),
+	__ATTR(vtg_level, (S_IRUGO | S_IWUSR), qpnp_hap_vmax_show, qpnp_hap_vmax_store),
+	__ATTR(vtg_default, S_IRUGO, qpnp_hap_vmax_default, NULL),
+	__ATTR(vtg_max, S_IRUGO, qpnp_hap_vmax_max, NULL),
+	__ATTR(vtg_min, S_IRUGO, qpnp_hap_vmax_min, NULL),
 	__ATTR(wf_s0, 0664, qpnp_hap_wf_s0_show, qpnp_hap_wf_s0_store),
 	__ATTR(wf_s1, 0664, qpnp_hap_wf_s1_show, qpnp_hap_wf_s1_store),
 	__ATTR(wf_s2, 0664, qpnp_hap_wf_s2_show, qpnp_hap_wf_s2_store),
@@ -1437,57 +1497,33 @@ static struct device_attribute qpnp_hap_attrs[] = {
 		qpnp_hap_min_max_test_data_store),
 };
 
-static int calculate_lra_code(struct qpnp_hap *hap)
+static void calculate_lra_code(struct qpnp_hap *hap)
 {
-	u8 lra_drive_period_code_lo = 0, lra_drive_period_code_hi = 0;
-	u32 lra_drive_period_code, lra_drive_frequency_hz, freq_variation;
-	u8 start_variation = AUTO_RES_ERROR_MAX, i;
-	u8 neg_idx = 0, pos_idx = ADJUSTED_LRA_PLAY_RATE_CODE_ARRSIZE - 1;
-	int rc = 0;
+	u8 play_rate_code_lo, play_rate_code_hi;
+	int play_rate_code, neg_idx = 0, pos_idx = LRA_POS_FREQ_COUNT-1;
+	int lra_init_freq, freq_variation, start_variation = AUTO_RES_ERR_MAX;
+	int range;
 
-	rc = qpnp_hap_read_reg(hap, QPNP_HAP_RATE_CFG1_REG(hap->base),
-			&lra_drive_period_code_lo);
-	if (rc) {
-		pr_err("Error while reading RATE_CFG1 register\n");
-		return rc;
+	qpnp_hap_read_reg(hap, &play_rate_code_lo,
+				QPNP_HAP_RATE_CFG1_REG(hap->base));
+	qpnp_hap_read_reg(hap, &play_rate_code_hi,
+				QPNP_HAP_RATE_CFG2_REG(hap->base));
+
+	play_rate_code = (play_rate_code_hi << 8) | (play_rate_code_lo & 0xff);
+
+	lra_init_freq = 200000 / play_rate_code;
+	range = (abs(lra_init_freq - 235) * 100) / 235;
+
+	lra_init_freq = (range < 5) ? lra_init_freq : 235;
+
+	while (start_variation >= AUTO_RES_ERR_CAPTURE_RES) {
+		freq_variation = (lra_init_freq * start_variation) / 100;
+		lra_play_rate_code[neg_idx++] = 200000 / (lra_init_freq -
+					freq_variation);
+		lra_play_rate_code[pos_idx--] = 200000 / (lra_init_freq +
+					freq_variation);
+		start_variation -= AUTO_RES_ERR_CAPTURE_RES;
 	}
-
-	rc = qpnp_hap_read_reg(hap, QPNP_HAP_RATE_CFG2_REG(hap->base),
-			&lra_drive_period_code_hi);
-	if (rc) {
-		pr_err("Error while reading RATE_CFG2 register\n");
-		return rc;
-	}
-
-	if (!lra_drive_period_code_lo && !lra_drive_period_code_hi) {
-		pr_err("Unexpected Error: both RATE_CFG1 and RATE_CFG2 read 0\n");
-		return -EINVAL;
-	}
-
-	lra_drive_period_code =
-	 (lra_drive_period_code_hi << 8) | (lra_drive_period_code_lo & 0xff);
-	lra_drive_frequency_hz = 200000 / lra_drive_period_code;
-
-	while (start_variation >= AUTO_RES_ERROR_CAPTURE_RES) {
-		freq_variation =
-			 (lra_drive_frequency_hz * start_variation) / 100;
-		adjusted_lra_play_rate_code[neg_idx++] =
-			200000 / (lra_drive_frequency_hz - freq_variation);
-		adjusted_lra_play_rate_code[pos_idx--] =
-			200000 / (lra_drive_frequency_hz + freq_variation);
-		start_variation -= AUTO_RES_ERROR_CAPTURE_RES;
-	}
-
-	pr_debug("lra_drive_period_code_lo = 0x%x lra_drive_period_code_hi = 0x%x\n"
-		"lra_drive_period_code = 0x%x, lra_drive_frequency_hz = 0x%x\n"
-		"Calculated play rate code values are :\n",
-		lra_drive_period_code_lo, lra_drive_period_code_hi,
-		lra_drive_period_code, lra_drive_frequency_hz);
-
-	for (i = 0; i < ADJUSTED_LRA_PLAY_RATE_CODE_ARRSIZE; ++i)
-		pr_debug(" 0x%x", adjusted_lra_play_rate_code[i]);
-
-	return 0;
 }
 
 static int qpnp_hap_auto_res_enable(struct qpnp_hap *hap, int enable)
@@ -1495,86 +1531,76 @@ static int qpnp_hap_auto_res_enable(struct qpnp_hap *hap, int enable)
 	int rc = 0;
 	u8 val;
 
-	val = enable ? AUTO_RES_ENABLE : 0;
-	if (hap->pmic_subtype == PM660_SUBTYPE)
-		rc = qpnp_hap_masked_write_reg(hap,
-				QPNP_HAP_AUTO_RES_CTRL(hap->base),
-				QPNP_HAP_AUTO_RES_MASK, val);
-	else
-		rc = qpnp_hap_sec_masked_write_reg(hap,
-				QPNP_HAP_TEST2_REG(hap->base),
-				QPNP_HAP_AUTO_RES_MASK, val);
+	rc = qpnp_hap_read_reg(hap, &val, QPNP_HAP_TEST2_REG(hap->base));
 	if (rc < 0)
 		return rc;
+	val &= QPNP_HAP_TEST2_AUTO_RES_MASK;
 
 	if (enable)
-		hap->status_flags |= AUTO_RESONANCE_ENABLED;
+		val |= AUTO_RES_ENABLE;
 	else
-		hap->status_flags &= ~AUTO_RESONANCE_ENABLED;
+		val |= AUTO_RES_DISABLE;
+
+	/* TEST2 is a secure access register */
+	rc = qpnp_hap_sec_access(hap);
+	if (rc)
+		return rc;
+
+	rc = qpnp_hap_write_reg(hap, &val, QPNP_HAP_TEST2_REG(hap->base));
+	if (rc)
+		return rc;
 
 	return rc;
 }
 
 static void update_lra_frequency(struct qpnp_hap *hap)
 {
-	u8 lra_auto_res_lo = 0, lra_auto_res_hi = 0, val;
-	u32 play_rate_code;
-	int rc;
+	u8 lra_auto_res_lo = 0, lra_auto_res_hi = 0;
+	u32 temp = 0;
+	int lra_init_freq;
 
 	qpnp_hap_read_reg(hap, QPNP_HAP_LRA_AUTO_RES_LO(hap->base),
 		&lra_auto_res_lo);
 	qpnp_hap_read_reg(hap, QPNP_HAP_LRA_AUTO_RES_HI(hap->base),
 		&lra_auto_res_hi);
 
-	play_rate_code =
-		 (lra_auto_res_hi & 0xF0) << 4 | (lra_auto_res_lo & 0xFF);
+	lra_auto_res_hi = lra_auto_res_hi >> 4;
+	temp |= lra_auto_res_hi;
+	temp = temp << 8;
+	temp |= lra_auto_res_lo;
 
-	pr_debug("lra_auto_res_lo = 0x%x lra_auto_res_hi = 0x%x play_rate_code = 0x%x\n",
-		lra_auto_res_lo, lra_auto_res_hi, play_rate_code);
+	lra_init_freq = 200000 / temp;
 
-	rc = qpnp_hap_read_reg(hap, QPNP_HAP_STATUS(hap->base), &val);
-	if (rc < 0)
-		return;
-
-	/*
-	 * If the drive period code read from AUTO_RES_LO and AUTO_RES_HI
-	 * registers is more than the max limit percent variation or less
-	 * than the min limit percent variation specified through DT, then
-	 * auto-resonance is disabled.
-	 */
-
-	if ((val & AUTO_RES_ERR_BIT) ||
-		((play_rate_code <= hap->drive_period_code_min_limit) ||
-		(play_rate_code >= hap->drive_period_code_max_limit))) {
-		if (val & AUTO_RES_ERR_BIT)
-			pr_debug("Auto-resonance error %x\n", val);
-		else
-			pr_debug("play rate %x out of bounds [min: 0x%x, max: 0x%x]\n",
-				play_rate_code,
-				hap->drive_period_code_min_limit,
-				hap->drive_period_code_max_limit);
-		rc = qpnp_hap_auto_res_enable(hap, 0);
-		if (rc < 0)
-			pr_debug("Auto-resonance write failed\n");
-		return;
+	if ((abs(lra_init_freq - 235) * 100 / 235) < 5) {
+		lra_auto_res_lo = lra_auto_res_lo;
+		lra_auto_res_hi = lra_auto_res_hi;
+	} else {
+		lra_auto_res_lo = 0x53;
+		lra_auto_res_hi = 0x3;
 	}
 
-	qpnp_hap_write_reg(hap, QPNP_HAP_RATE_CFG1_REG(hap->base),
-		lra_auto_res_lo);
+	if (lra_auto_res_lo && lra_auto_res_hi) {
+		qpnp_hap_write_reg(hap, &lra_auto_res_lo,
+				QPNP_HAP_RATE_CFG1_REG(hap->base));
 
-	lra_auto_res_hi = lra_auto_res_hi >> 4;
-	qpnp_hap_write_reg(hap, QPNP_HAP_RATE_CFG2_REG(hap->base),
-		lra_auto_res_hi);
+		qpnp_hap_write_reg(hap, &lra_auto_res_hi,
+				QPNP_HAP_RATE_CFG2_REG(hap->base));
+	}
 }
 
 static enum hrtimer_restart detect_auto_res_error(struct hrtimer *timer)
 {
 	struct qpnp_hap *hap = container_of(timer, struct qpnp_hap,
 					auto_res_err_poll_timer);
+	u8 val;
 	ktime_t currtime;
 
-	if (!(hap->status_flags & AUTO_RESONANCE_ENABLED))
+	qpnp_hap_read_reg(hap, &val, QPNP_HAP_STATUS(hap->base));
+
+	if (val & AUTO_RES_ERR_BIT) {
+		schedule_work(&hap->auto_res_err_work);
 		return HRTIMER_NORESTART;
+	}
 
 	update_lra_frequency(hap);
 	currtime  = ktime_get();
@@ -1583,13 +1609,55 @@ static enum hrtimer_restart detect_auto_res_error(struct hrtimer *timer)
 	return HRTIMER_RESTART;
 }
 
+static void correct_auto_res_error(struct work_struct *auto_res_err_work)
+{
+	struct qpnp_hap *hap = container_of(auto_res_err_work,
+				struct qpnp_hap, auto_res_err_work);
+
+	u8 lra_code_lo, lra_code_hi, disable_hap = 0x00;
+	static int lra_freq_index;
+	ktime_t currtime, remaining_time;
+	int temp, rem = 0, index = lra_freq_index % LRA_POS_FREQ_COUNT;
+
+	if (hrtimer_active(&hap->hap_timer)) {
+		remaining_time  = hrtimer_get_remaining(&hap->hap_timer);
+		rem = (int)ktime_to_us(remaining_time);
+	}
+
+	qpnp_hap_play(hap, 0);
+	qpnp_hap_write_reg(hap, &disable_hap,
+				QPNP_HAP_EN_CTL_REG(hap->base));
+
+	lra_code_lo = lra_play_rate_code[index] & QPNP_HAP_RATE_CFG1_MASK;
+	qpnp_hap_write_reg(hap, &lra_code_lo,
+				QPNP_HAP_RATE_CFG1_REG(hap->base));
+
+	qpnp_hap_read_reg(hap, &lra_code_hi,
+				QPNP_HAP_RATE_CFG2_REG(hap->base));
+
+	lra_code_hi &= QPNP_HAP_RATE_CFG2_MASK;
+	temp = lra_play_rate_code[index] >> QPNP_HAP_RATE_CFG2_SHFT;
+	lra_code_hi |= temp;
+
+	qpnp_hap_write_reg(hap, &lra_code_hi,
+					QPNP_HAP_RATE_CFG2_REG(hap->base));
+
+	lra_freq_index++;
+
+	if (rem > 0) {
+		currtime = ktime_get();
+		hap->state = 1;
+		hrtimer_forward(&hap->hap_timer, currtime, remaining_time);
+		schedule_work(&hap->work);
+	}
+}
+
 /* set api for haptics */
 static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 {
-	u8 auto_res_mode_qwd;
 	int rc = 0;
+	u8 val = 0;
 	unsigned long timeout_ns = POLL_TIME_AUTO_RES_ERR_NS;
-	u32 back_emf_delay_us = hap->time_required_to_generate_back_emf_us;
 
 	if (hap->play_mode == QPNP_HAP_PWM) {
 		if (on)
@@ -1599,28 +1667,8 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 	} else if (hap->play_mode == QPNP_HAP_BUFFER ||
 			hap->play_mode == QPNP_HAP_DIRECT) {
 		if (on) {
-			/*
-			 * For auto resonance detection to work properly,
-			 * sufficient back-emf has to be generated. In general,
-			 * back-emf takes some time to build up. When the auto
-			 * resonance mode is chosen as QWD, high-z will be
-			 * applied for every LRA cycle and hence there won't be
-			 * enough back-emf at the start-up. Hence, the motor
-			 * needs to vibrate for few LRA cycles after the PLAY
-			 * bit is asserted. So disable the auto resonance here
-			 * and enable it after the sleep of
-			 * 'time_required_to_generate_back_emf_us' is completed.
-			 */
-			if (hap->pmic_subtype == PM660_SUBTYPE)
-				auto_res_mode_qwd = (hap->auto_res_mode ==
-						QPNP_HAP_PM660_AUTO_RES_QWD);
-			else
-				auto_res_mode_qwd = (hap->auto_res_mode ==
-							QPNP_HAP_AUTO_RES_QWD);
-
-			if ((hap->act_type == QPNP_HAP_LRA) &&
-				(hap->correct_lra_drive_freq ||
-				auto_res_mode_qwd))
+			if (hap->correct_lra_drive_freq ||
+				hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD)
 				qpnp_hap_auto_res_enable(hap, 0);
 
 			rc = qpnp_hap_mod_enable(hap, on);
@@ -1629,19 +1677,17 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 
 			rc = qpnp_hap_play(hap, on);
 
-			if ((hap->act_type == QPNP_HAP_LRA) &&
-				(hap->correct_lra_drive_freq ||
-				auto_res_mode_qwd)) {
-				usleep_range(back_emf_delay_us,
-						(back_emf_delay_us + 1));
+			if ((hap->act_type == QPNP_HAP_LRA &&
+				hap->correct_lra_drive_freq) ||
+				hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD) {
+				usleep_range(AUTO_RES_ENABLE_TIMEOUT,
+					(AUTO_RES_ENABLE_TIMEOUT + 1));
 
 				rc = qpnp_hap_auto_res_enable(hap, 1);
 				if (rc < 0)
 					return rc;
 			}
-			if (hap->act_type == QPNP_HAP_LRA &&
-					hap->correct_lra_drive_freq &&
-					!hap->lra_hw_auto_resonance) {
+			if (hap->correct_lra_drive_freq) {
 				/*
 				 * Start timer to poll Auto Resonance error bit
 				 */
@@ -1657,11 +1703,11 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 			if (rc < 0)
 				return rc;
 
-			if (hap->act_type == QPNP_HAP_LRA &&
-				hap->correct_lra_drive_freq &&
-				(hap->status_flags & AUTO_RESONANCE_ENABLED) &&
-				!hap->lra_hw_auto_resonance) {
-				update_lra_frequency(hap);
+			if (hap->correct_lra_drive_freq) {
+				rc = qpnp_hap_read_reg(hap, &val,
+						QPNP_HAP_STATUS(hap->base));
+				if (!(val & AUTO_RES_ERR_BIT))
+					update_lra_frequency(hap);
 			}
 
 			rc = qpnp_hap_mod_enable(hap, on);
@@ -1669,6 +1715,7 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 					hap->correct_lra_drive_freq &&
 					!hap->lra_hw_auto_resonance) {
 				hrtimer_cancel(&hap->auto_res_err_poll_timer);
+				calculate_lra_code(hap);
 			}
 		}
 	}
@@ -1700,13 +1747,16 @@ static void qpnp_hap_td_enable(struct timed_output_dev *dev, int value)
 	} else {
 		value = (value > hap->timeout_ms ?
 				 hap->timeout_ms : value);
+		//if value < 11ms,use overdrive
+		qpnp_hap_wf_samp_store_all(dev, (value<11?1:0));
 		hap->state = 1;
-		hrtimer_start(&hap->hap_timer,
-			      ktime_set(value / 1000, (value % 1000) * 1000000),
-			      HRTIMER_MODE_REL);
+		hap->enable_time = value;
 	}
+	queue_work(vibqueue,&hap->work);
+	msleep(1);
 	mutex_unlock(&hap->lock);
-	schedule_work(&hap->work);
+	/* shankai 2015-07-7 modify end for optimizing the response speed of the vibrator*/
+	//schedule_work(&hap->work); wulaibin remove it 2017-02-22 for vibrete time nonuniform
 }
 
 /* play pwm bytes */
@@ -1776,15 +1826,19 @@ static void qpnp_hap_worker(struct work_struct *work)
 	struct qpnp_hap *hap = container_of(work, struct qpnp_hap,
 					 work);
 	u8 val = 0x00;
-	int rc;
+	int rc, reg_en = 0;
 
-	if (hap->vcc_pon && hap->state && !hap->vcc_pon_enabled) {
-		rc = regulator_enable(hap->vcc_pon);
-		if (rc < 0)
-			pr_err("could not enable vcc_pon regulator rc=%d\n",
-				rc);
-		else
-			hap->vcc_pon_enabled = true;
+	if (hap->state) {
+		hrtimer_start(&hap->hap_timer,
+			ktime_set(hap->enable_time / 1000,
+			(hap->enable_time % 1000) * 1000000), HRTIMER_MODE_REL);
+	}
+
+	if (hap->vcc_pon) {
+		reg_en = regulator_enable(hap->vcc_pon);
+		if (reg_en)
+			pr_err("%s: could not enable vcc_pon regulator\n",
+				 __func__);
 	}
 
 	/* Disable haptics module if the duration of short circuit
@@ -1799,13 +1853,11 @@ static void qpnp_hap_worker(struct work_struct *work)
 		qpnp_hap_set(hap, hap->state);
 	}
 
-	if (hap->vcc_pon && !hap->state && hap->vcc_pon_enabled) {
+	if (hap->vcc_pon && !reg_en && (hap->state == 0)) {
 		rc = regulator_disable(hap->vcc_pon);
 		if (rc)
-			pr_err("could not disable vcc_pon regulator rc=%d\n",
-				rc);
-		else
-			hap->vcc_pon_enabled = false;
+			pr_err("%s: could not disable vcc_pon regulator\n",
+				 __func__);
 	}
 }
 
@@ -1831,7 +1883,7 @@ static enum hrtimer_restart qpnp_hap_timer(struct hrtimer *timer)
 							 hap_timer);
 
 	hap->state = 0;
-	schedule_work(&hap->work);
+	queue_work(vibqueue, &hap->work);
 
 	return HRTIMER_NORESTART;
 }
@@ -1867,25 +1919,51 @@ static SIMPLE_DEV_PM_OPS(qpnp_haptic_pm_ops, qpnp_haptic_suspend, NULL);
 /* Configuration api for haptics registers */
 static int qpnp_hap_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	u32 temp;
-	int rc, i;
+	u8 reg = 0, unlock_val, error_value;
+	int rc, i, temp;
+	uint error_code = 0;
 
-	/*
-	 * This denotes the percentage error in rc clock multiplied by 10
-	 */
-	u8 rc_clk_err_percent_x10;
-
-	/* Configure the CFG1 register for actuator type */
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_CFG1_REG(hap->base),
-			QPNP_HAP_ACT_TYPE_MASK, hap->act_type);
+	/* Configure the ACTUATOR TYPE register */
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_ACT_TYPE_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_ACT_TYPE_MASK;
+	reg |= hap->act_type;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_ACT_TYPE_REG(hap->base));
 	if (rc)
 		return rc;
 
 	/* Configure auto resonance parameters */
-	rc = qpnp_hap_lra_auto_res_config(hap);
-	if (rc)
-		return rc;
+	if (hap->act_type == QPNP_HAP_LRA) {
+		if (hap->lra_res_cal_period < QPNP_HAP_RES_CAL_PERIOD_MIN)
+			hap->lra_res_cal_period = QPNP_HAP_RES_CAL_PERIOD_MIN;
+		else if (hap->lra_res_cal_period > QPNP_HAP_RES_CAL_PERIOD_MAX)
+			hap->lra_res_cal_period = QPNP_HAP_RES_CAL_PERIOD_MAX;
+
+		rc = qpnp_hap_read_reg(hap, &reg,
+					QPNP_HAP_LRA_AUTO_RES_REG(hap->base));
+		if (rc < 0)
+			return rc;
+		reg &= QPNP_HAP_AUTO_RES_MODE_MASK;
+		reg |= (hap->auto_res_mode << QPNP_HAP_AUTO_RES_MODE_SHIFT);
+		reg &= QPNP_HAP_LRA_HIGH_Z_MASK;
+		reg |= (hap->lra_high_z << QPNP_HAP_LRA_HIGH_Z_SHIFT);
+		reg &= QPNP_HAP_LRA_RES_CAL_PER_MASK;
+		temp = fls(hap->lra_res_cal_period) - 1;
+		reg |= (temp - 2);
+		rc = qpnp_hap_write_reg(hap, &reg,
+					QPNP_HAP_LRA_AUTO_RES_REG(hap->base));
+		if (rc)
+			return rc;
+	} else {
+		/* disable auto resonance for ERM */
+		reg = 0x00;
+
+		rc = qpnp_hap_write_reg(hap, &reg,
+					QPNP_HAP_LRA_AUTO_RES_REG(hap->base));
+		if (rc)
+			return rc;
+	}
 
 	/* Configure the PLAY MODE register */
 	rc = qpnp_hap_play_mode_config(hap);
@@ -1908,7 +1986,35 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 		return rc;
 
 	/* Configure the INTERNAL_PWM register */
-	rc = qpnp_hap_int_pwm_config(hap);
+	if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_253_KHZ) {
+		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_253_KHZ;
+		temp = 0;
+	} else if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_505_KHZ) {
+		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_505_KHZ;
+		temp = 1;
+	} else if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_739_KHZ) {
+		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_739_KHZ;
+		temp = 2;
+	} else {
+		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_1076_KHZ;
+		temp = 3;
+	}
+
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_INT_PWM_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_INT_PWM_MASK;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_INT_PWM_REG(hap->base));
+	if (rc)
+		return rc;
+
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_PWM_CAP_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_INT_PWM_MASK;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_PWM_CAP_REG(hap->base));
 	if (rc)
 		return rc;
 
@@ -1928,78 +2034,52 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 	else if (hap->wave_play_rate_us > QPNP_HAP_WAV_PLAY_RATE_US_MAX)
 		hap->wave_play_rate_us = QPNP_HAP_WAV_PLAY_RATE_US_MAX;
 
-	hap->init_drive_period_code =
-			 hap->wave_play_rate_us / QPNP_HAP_RATE_CFG_STEP_US;
+	temp = hap->wave_play_rate_us / QPNP_HAP_RATE_CFG_STEP_US;
 
 	/*
-	 * The frequency of 19.2Mzhz RC clock is subject to variation. Currently
-	 * a few PMI modules have MISC_TRIM_ERROR_RC19P2_CLK register
-	 * present in their MISC  block. This register holds the frequency error
-	 * in 19.2 MHz RC clock.
+	 * The frequency of 19.2Mzhz RC clock is subject to variation.
+	 * In PMI8950, TRIM_ERROR_RC19P2_CLK register in MISC module
+	 * holds the frequency error in 19.2Mhz RC clock
 	 */
 	if ((hap->act_type == QPNP_HAP_LRA) && hap->correct_lra_drive_freq
-			&& hap->misc_clk_trim_error_reg) {
-		pr_debug("TRIM register = 0x%x\n", hap->clk_trim_error_code);
+			&& hap->misc_trim_error_rc19p2_clk_reg_present) {
+		unlock_val = MISC_SEC_UNLOCK;
+		rc = regmap_write(hap->regmap, MISC_SEC_ACCESS, unlock_val);
+		if (rc)
+			dev_err(&hap->pdev->dev,
+				"Unable to do SEC_ACCESS rc:%d\n", rc);
 
-		/*
-		 * Extract the 4 LSBs and multiply by 7 to get
-		 * the %error in RC clock multiplied by 10
-		 */
-		rc_clk_err_percent_x10 = (hap->clk_trim_error_code & 0x0F) * 7;
+		regmap_read(hap->regmap, MISC_TRIM_ERROR_RC19P2_CLK,
+			    &error_code);
 
-		/*
-		 * If the TRIM register holds value less than 0x80,
-		 * then there is a positive error in the RC clock.
-		 * If the TRIM register holds value greater than or equal to
-		 * 0x80, then there is a negative error in the RC clock. Bit 7
-		 * is the sign bit for error code.
-		 *
-		 * The adjusted play rate code is calculated as follows:
-		 * LRA drive period code (RATE_CFG) =
-		 *	 200KHz * 1 / LRA drive frequency * ( 1 + %error/ 100)
-		 *
-		 * This can be rewritten as:
-		 * LRA drive period code (RATE_CFG) =
-		 *	200KHz * 1/LRA drive frequency *( 1 + %error * 10/1000)
-		 *
-		 * Since 200KHz * 1/LRA drive frequency is already calculated
-		 * above we only do rest of the scaling here.
-		 */
-		if (hap->clk_trim_error_code & BIT(7))
-			LRA_DRIVE_PERIOD_NEG_ERR(hap, rc_clk_err_percent_x10);
+		error_value = (error_code & 0x0F) * 7;
+
+		if (error_code & 0x80)
+			temp = (temp * (1000 - error_value)) / 1000;
 		else
-			LRA_DRIVE_PERIOD_POS_ERR(hap, rc_clk_err_percent_x10);
+			temp = (temp * (1000 + error_value)) / 1000;
 	}
 
-	pr_debug("Play rate code 0x%x\n", hap->init_drive_period_code);
-
-	val = hap->init_drive_period_code & QPNP_HAP_RATE_CFG1_MASK;
-	rc = qpnp_hap_write_reg(hap, QPNP_HAP_RATE_CFG1_REG(hap->base), val);
+	reg = temp & QPNP_HAP_RATE_CFG1_MASK;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_RATE_CFG1_REG(hap->base));
 	if (rc)
 		return rc;
 
-	val = (hap->init_drive_period_code & 0xF00) >> QPNP_HAP_RATE_CFG2_SHFT;
-	rc = qpnp_hap_write_reg(hap, QPNP_HAP_RATE_CFG2_REG(hap->base), val);
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_RATE_CFG2_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_RATE_CFG2_MASK;
+	temp = temp >> QPNP_HAP_RATE_CFG2_SHFT;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_RATE_CFG2_REG(hap->base));
 	if (rc)
 		return rc;
 
-	if (hap->act_type == QPNP_HAP_LRA &&
-				hap->perform_lra_auto_resonance_search)
+	if ((hap->act_type == QPNP_HAP_LRA) && hap->correct_lra_drive_freq)
 		calculate_lra_code(hap);
-
-	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq) {
-		hap->drive_period_code_max_limit =
-			(hap->init_drive_period_code * (100 +
-			hap->drive_period_code_max_limit_percent_variation))
-			/ 100;
-		hap->drive_period_code_min_limit =
-			(hap->init_drive_period_code * (100 -
-			hap->drive_period_code_min_limit_percent_variation))
-			/ 100;
-		pr_debug("Drive period code max limit %x min limit %x\n",
-			hap->drive_period_code_max_limit,
-			hap->drive_period_code_min_limit);
-	}
 
 	/* Configure BRAKE register */
 	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_EN_CTL2_REG(hap->base),
@@ -2139,36 +2219,20 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	}
 
 	if (hap->act_type == QPNP_HAP_LRA) {
+		hap->auto_res_mode = QPNP_HAP_AUTO_RES_ZXD_EOP;
 		rc = of_property_read_string(pdev->dev.of_node,
 				"qcom,lra-auto-res-mode", &temp_str);
 		if (!rc) {
-			if (hap->pmic_subtype == PM660_SUBTYPE) {
-				hap->auto_res_mode =
-						QPNP_HAP_PM660_AUTO_RES_QWD;
-				if (strcmp(temp_str, "zxd") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_PM660_AUTO_RES_ZXD;
-				else if (strcmp(temp_str, "qwd") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_PM660_AUTO_RES_QWD;
-			} else {
+			if (strcmp(temp_str, "none") == 0)
+				hap->auto_res_mode = QPNP_HAP_AUTO_RES_NONE;
+			else if (strcmp(temp_str, "zxd") == 0)
+				hap->auto_res_mode = QPNP_HAP_AUTO_RES_ZXD;
+			else if (strcmp(temp_str, "qwd") == 0)
+				hap->auto_res_mode = QPNP_HAP_AUTO_RES_QWD;
+			else if (strcmp(temp_str, "max-qwd") == 0)
+				hap->auto_res_mode = QPNP_HAP_AUTO_RES_MAX_QWD;
+			else
 				hap->auto_res_mode = QPNP_HAP_AUTO_RES_ZXD_EOP;
-				if (strcmp(temp_str, "none") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_AUTO_RES_NONE;
-				else if (strcmp(temp_str, "zxd") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_AUTO_RES_ZXD;
-				else if (strcmp(temp_str, "qwd") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_AUTO_RES_QWD;
-				else if (strcmp(temp_str, "max-qwd") == 0)
-					hap->auto_res_mode =
-						QPNP_HAP_AUTO_RES_MAX_QWD;
-				else
-					hap->auto_res_mode =
-						QPNP_HAP_AUTO_RES_ZXD_EOP;
-			}
 		} else if (rc != -EINVAL) {
 			pr_err("Unable to read auto res mode\n");
 			return rc;
@@ -2180,11 +2244,6 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		if (!rc) {
 			if (strcmp(temp_str, "none") == 0)
 				hap->lra_high_z = QPNP_HAP_LRA_HIGH_Z_NONE;
-			if (hap->pmic_subtype == PM660_SUBTYPE) {
-				if (strcmp(temp_str, "opt0") == 0)
-					hap->lra_high_z =
-						QPNP_HAP_LRA_HIGH_Z_NONE;
-			}
 			else if (strcmp(temp_str, "opt1") == 0)
 				hap->lra_high_z = QPNP_HAP_LRA_HIGH_Z_OPT1;
 			else if (strcmp(temp_str, "opt2") == 0)
@@ -2196,15 +2255,6 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 			return rc;
 		}
 
-		hap->lra_qwd_drive_duration = -EINVAL;
-		rc = of_property_read_u32(pdev->dev.of_node,
-				"qcom,lra-qwd-drive-duration",
-				&hap->lra_qwd_drive_duration);
-
-		hap->calibrate_at_eop = -EINVAL;
-		rc = of_property_read_u32(pdev->dev.of_node,
-			"qcom,lra-calibrate-at-eop", &hap->calibrate_at_eop);
-
 		hap->lra_res_cal_period = QPNP_HAP_RES_CAL_PERIOD_MAX;
 		rc = of_property_read_u32(pdev->dev.of_node,
 				"qcom,lra-res-cal-period", &temp);
@@ -2215,44 +2265,13 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 			return rc;
 		}
 
-		hap->lra_hw_auto_resonance =
-				of_property_read_bool(pdev->dev.of_node,
-				"qcom,lra-hw-auto-resonance");
-
-		hap->perform_lra_auto_resonance_search =
-				of_property_read_bool(pdev->dev.of_node,
-				"qcom,perform-lra-auto-resonance-search");
-
 		hap->correct_lra_drive_freq =
 				of_property_read_bool(pdev->dev.of_node,
 						"qcom,correct-lra-drive-freq");
 
-		hap->drive_period_code_max_limit_percent_variation = 25;
-		rc = of_property_read_u32(pdev->dev.of_node,
-		"qcom,drive-period-code-max-limit-percent-variation", &temp);
-		if (!rc)
-			hap->drive_period_code_max_limit_percent_variation =
-								(u8) temp;
-
-		hap->drive_period_code_min_limit_percent_variation = 25;
-		rc = of_property_read_u32(pdev->dev.of_node,
-		"qcom,drive-period-code-min-limit-percent-variation", &temp);
-		if (!rc)
-			hap->drive_period_code_min_limit_percent_variation =
-								(u8) temp;
-
-		if (hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD) {
-			hap->time_required_to_generate_back_emf_us =
-					QPNP_HAP_TIME_REQ_FOR_BACK_EMF_GEN;
-			rc = of_property_read_u32(pdev->dev.of_node,
-				"qcom,time-required-to-generate-back-emf-us",
-				&temp);
-			if (!rc)
-				hap->time_required_to_generate_back_emf_us =
-									temp;
-		} else {
-			hap->time_required_to_generate_back_emf_us = 0;
-		}
+		hap->misc_trim_error_rc19p2_clk_reg_present =
+				of_property_read_bool(pdev->dev.of_node,
+				"qcom,misc-trim-error-rc19p2-clk-reg-present");
 	}
 
 	rc = of_property_read_string(pdev->dev.of_node,
@@ -2276,9 +2295,11 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	}
 
 	hap->vmax_mv = QPNP_HAP_VMAX_MAX_MV;
+	hap->vmax_default_mv = QPNP_HAP_VMAX_MAX_MV;
 	rc = of_property_read_u32(pdev->dev.of_node, "qcom,vmax-mv", &temp);
 	if (!rc) {
 		hap->vmax_mv = temp;
+		hap->vmax_default_mv = temp;
 	} else if (rc != -EINVAL) {
 		pr_err("Unable to read vmax\n");
 		return rc;
@@ -2382,34 +2403,6 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	return 0;
 }
 
-static int qpnp_hap_get_pmic_revid(struct qpnp_hap *hap)
-{
-	struct pmic_revid_data *pmic_rev_id;
-	struct device_node *revid_dev_node;
-
-	revid_dev_node = of_parse_phandle(hap->pdev->dev.of_node,
-					"qcom,pmic-revid", 0);
-	if (!revid_dev_node) {
-		pr_err("Missing qcom,pmic-revid property - driver failed\n");
-		return -EINVAL;
-	}
-	pmic_rev_id = get_revid_data(revid_dev_node);
-	if (IS_ERR_OR_NULL(pmic_rev_id)) {
-		pr_err("Unable to get pmic_revid rc=%ld\n",
-						PTR_ERR(pmic_rev_id));
-		/*
-		 * the revid peripheral must be registered, any failure
-		 * here only indicates that the rev-id module has not
-		 * probed yet.
-		 */
-		return -EPROBE_DEFER;
-	}
-
-	hap->pmic_subtype = pmic_rev_id->pmic_subtype;
-
-	return 0;
-}
-
 static int qpnp_haptic_probe(struct platform_device *pdev)
 {
 	struct qpnp_hap *hap;
@@ -2438,12 +2431,6 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, hap);
 
-	rc = qpnp_hap_get_pmic_revid(hap);
-	if (rc) {
-		pr_err("Unable to check PMIC version rc=%d\n", rc);
-		return rc;
-	}
-
 	rc = qpnp_hap_parse_dt(hap);
 	if (rc) {
 		pr_err("DT parsing failed\n");
@@ -2459,6 +2446,9 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 
 	mutex_init(&hap->lock);
 	mutex_init(&hap->wf_lock);
+
+	vibqueue = create_singlethread_workqueue("vibthread");
+
 	INIT_WORK(&hap->work, qpnp_hap_worker);
 	INIT_DELAYED_WORK(&hap->sc_work, qpnp_handle_sc_irq);
 	init_completion(&hap->completion);
@@ -2473,8 +2463,8 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 	hap->timed_dev.get_time = qpnp_hap_get_time;
 	hap->timed_dev.enable = qpnp_hap_td_enable;
 
-	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq &&
-						!hap->lra_hw_auto_resonance) {
+	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq) {
+		INIT_WORK(&hap->auto_res_err_work, correct_auto_res_error);
 		hrtimer_init(&hap->auto_res_err_poll_timer, CLOCK_MONOTONIC,
 						HRTIMER_MODE_REL);
 		hap->auto_res_err_poll_timer.function = detect_auto_res_error;

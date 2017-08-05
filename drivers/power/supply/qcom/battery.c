@@ -457,12 +457,10 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 			return rc;
 		}
 	}
-
-	pl_dbg(chip, PR_PARALLEL, "master_fcc=%d slave_fcc=%d distribution=(%d/%d)\n",
+	pr_info("master_fcc=%d slave_fcc=%d distribution=(%d/%d)\n",
 		   master_fcc_ua, slave_fcc_ua,
 		   (master_fcc_ua * 100) / total_fcc_ua,
 		   (slave_fcc_ua * 100) / total_fcc_ua);
-
 	return 0;
 }
 
@@ -474,6 +472,7 @@ static int pl_fv_vote_callback(struct votable *votable, void *data,
 	union power_supply_propval pval = {0, };
 	int rc = 0;
 	int effective_fv_uv = fv_uv;
+	pr_info("%s,fv_uv=%d\n",__func__,fv_uv);
 
 	if (fv_uv < 0)
 		return 0;
@@ -655,10 +654,8 @@ static int pl_disable_vote_callback(struct votable *votable,
 		rerun_election(chip->fcc_votable);
 		rerun_election(chip->fv_votable);
 	}
-
-	pl_dbg(chip, PR_PARALLEL, "parallel charging %s\n",
+	pr_info("parallel charging %s\n",
 		   pl_disable ? "disabled" : "enabled");
-
 	return 0;
 }
 
@@ -800,6 +797,7 @@ static void handle_settled_icl_change(struct pl_data *chip)
 
 	if (chip->pl_mode == POWER_SUPPLY_PL_USBIN_USBIN
 			|| chip->pl_mode == POWER_SUPPLY_PL_USBIN_USBIN_EXT) {
+
 		/*
 		 * call aicl split only when USBIN_USBIN and enabled
 		 * and if aicl changed
