@@ -74,6 +74,7 @@ enum print_reason {
 #define DEBUG_BOARD_VOTER		"DEBUG_BOARD_VOTER"
 #define PD_SUSPEND_SUPPORTED_VOTER	"PD_SUSPEND_SUPPORTED_VOTER"
 #define PL_DELAY_VOTER			"PL_DELAY_VOTER"
+#define PL_DELAY_HVDCP_VOTER		"PL_DELAY_HVDCP_VOTER"
 #define CTM_VOTER			"CTM_VOTER"
 #define SW_QC3_VOTER			"SW_QC3_VOTER"
 #define AICL_RERUN_VOTER		"AICL_RERUN_VOTER"
@@ -318,6 +319,7 @@ struct smb_charger {
 	struct work_struct	vconn_oc_work;
 	struct delayed_work	otg_ss_done_work;
 	struct delayed_work	icl_change_work;
+	struct delayed_work	pl_enable_work;
 	struct work_struct	legacy_detection_work;
 	/* cached status */
 /* david.liu@bsp, 20160926 Add dash charging */
@@ -403,10 +405,12 @@ struct smb_charger {
 	int			vconn_attempts;
 	int			default_icl_ua;
 	int			otg_cl_ua;
+	bool			uusb_apsd_rerun_done;
 	bool			pd_hard_reset;
 	int			usb_present;
 	u8			typec_status[5];
 	bool			typec_legacy_valid;
+
 	/* workaround flag */
 	u32			wa_flags;
 	bool                    cc2_sink_detach_flag;
@@ -414,6 +418,8 @@ struct smb_charger {
 
 	/* extcon for VBUS / ID notification to USB for uUSB */
 	struct extcon_dev	*extcon;
+
+	int			icl_reduction_ua;
 
 	/* qnovo */
 	int			qnovo_fcc_ua;

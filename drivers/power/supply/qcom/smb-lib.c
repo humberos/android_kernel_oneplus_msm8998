@@ -1022,18 +1022,6 @@ enable_icl_changed_interrupt:
  * VOTABLE CALLBACKS *
  *********************/
 
-static int smblib_dc_suspend_vote_callback(struct votable *votable, void *data,
-			int suspend, const char *client)
-{
-	struct smb_charger *chg = data;
-
-	/* resume input if suspend is invalid */
-	if (suspend < 0)
-		suspend = 0;
-
-	return smblib_set_dc_suspend(chg, (bool)suspend);
-}
-
 static int smblib_dc_icl_vote_callback(struct votable *votable, void *data,
 			int icl_ua, const char *client)
 {
@@ -6556,16 +6544,6 @@ static void smblib_legacy_detection_work(struct work_struct *work)
 	smblib_usb_typec_change(chg);
 	vote(chg->typec_irq_disable_votable, LEGACY_UNKNOWN_VOTER, false, 0);
 	mutex_unlock(&chg->lock);
-}
-
-static void smblib_pl_enable_work(struct work_struct *work)
-{
-	struct smb_charger *chg = container_of(work, struct smb_charger,
-							pl_enable_work.work);
-
-	smblib_dbg(chg, PR_PARALLEL, "timer expired, enabling parallel\n");
-	vote(chg->pl_disable_votable, PL_DELAY_VOTER, false, 0);
-	vote(chg->awake_votable, PL_DELAY_VOTER, false, 0);
 }
 
 static int smblib_create_votables(struct smb_charger *chg)

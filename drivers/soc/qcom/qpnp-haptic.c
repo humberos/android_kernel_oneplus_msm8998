@@ -10,8 +10,6 @@
  * GNU General Public License for more details.
  */
 
-#define pr_fmt(fmt)	"haptic: %s: " fmt, __func__
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -28,8 +26,11 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/qpnp/qpnp-haptic.h>
-#include <linux/qpnp/qpnp-revid.h>
 #include "../../staging/android/timed_output.h"
+
+#define QPNP_IRQ_FLAGS	(IRQF_TRIGGER_RISING | \
+			IRQF_TRIGGER_FALLING | \
+			IRQF_ONESHOT)
 
 #define QPNP_HAP_STATUS(b)		(b + 0x0A)
 #define QPNP_HAP_LRA_AUTO_RES_LO(b)	(b + 0x0B)
@@ -58,7 +59,7 @@
 #define QPNP_HAP_TEST2_REG(b)		(b + 0xE3)
 
 #define QPNP_HAP_STATUS_BUSY		0x02
-#define QPNP_HAP_ACT_TYPE_MASK		BIT(0)
+#define QPNP_HAP_ACT_TYPE_MASK		0xFE
 #define QPNP_HAP_LRA			0x0
 #define QPNP_HAP_ERM			0x1
 #define QPNP_HAP_AUTO_RES_MODE_MASK	0x8F
@@ -74,20 +75,21 @@
 #define QPNP_HAP_VMAX_SHIFT		1
 #define QPNP_HAP_VMAX_MIN_MV		116
 #define QPNP_HAP_VMAX_MAX_MV		3596
-#define QPNP_HAP_ILIM_MASK		BIT(0)
+#define QPNP_HAP_ILIM_MASK		0xFE
 #define QPNP_HAP_ILIM_MIN_MV		400
 #define QPNP_HAP_ILIM_MAX_MV		800
-#define QPNP_HAP_SC_DEB_MASK		GENMASK(2, 0)
+#define QPNP_HAP_SC_DEB_MASK		0xF8
+#define QPNP_HAP_SC_DEB_SUB		2
 #define QPNP_HAP_SC_DEB_CYCLES_MIN	0
 #define QPNP_HAP_DEF_SC_DEB_CYCLES	8
 #define QPNP_HAP_SC_DEB_CYCLES_MAX	32
 #define QPNP_HAP_SC_CLR			1
-#define QPNP_HAP_INT_PWM_MASK		GENMASK(1, 0)
+#define QPNP_HAP_INT_PWM_MASK		0xFC
 #define QPNP_HAP_INT_PWM_FREQ_253_KHZ	253
 #define QPNP_HAP_INT_PWM_FREQ_505_KHZ	505
 #define QPNP_HAP_INT_PWM_FREQ_739_KHZ	739
 #define QPNP_HAP_INT_PWM_FREQ_1076_KHZ	1076
-#define QPNP_HAP_WAV_SHAPE_MASK		BIT(0)
+#define QPNP_HAP_WAV_SHAPE_MASK		0xFE
 #define QPNP_HAP_RATE_CFG1_MASK		0xFF
 #define QPNP_HAP_RATE_CFG2_MASK		0xF0
 #define QPNP_HAP_RATE_CFG2_SHFT		8
@@ -95,9 +97,9 @@
 #define QPNP_HAP_WAV_PLAY_RATE_US_MIN	0
 #define QPNP_HAP_DEF_WAVE_PLAY_RATE_US	5715
 #define QPNP_HAP_WAV_PLAY_RATE_US_MAX	20475
-#define QPNP_HAP_WAV_REP_MASK		GENMASK(6, 4)
-#define QPNP_HAP_WAV_S_REP_MASK		GENMASK(1, 0)
-#define QPNP_HAP_WAV_REP_SHIFT		4
+#define QPNP_HAP_WAV_REP_MASK		0x8F
+#define QPNP_HAP_WAV_S_REP_MASK		0xFC
+#define QPNP_HAP_WAV_REP_SHFT		4
 #define QPNP_HAP_WAV_REP_MIN		1
 #define QPNP_HAP_WAV_REP_MAX		128
 #define QPNP_HAP_WAV_S_REP_MIN		1
@@ -105,13 +107,13 @@
 #define QPNP_HAP_BRAKE_PAT_MASK		0x3
 #define QPNP_HAP_ILIM_MIN_MA		400
 #define QPNP_HAP_ILIM_MAX_MA		800
-#define QPNP_HAP_EXT_PWM_MASK		GENMASK(1, 0)
+#define QPNP_HAP_EXT_PWM_MASK		0xFC
 #define QPNP_HAP_EXT_PWM_FREQ_25_KHZ	25
 #define QPNP_HAP_EXT_PWM_FREQ_50_KHZ	50
 #define QPNP_HAP_EXT_PWM_FREQ_75_KHZ	75
 #define QPNP_HAP_EXT_PWM_FREQ_100_KHZ	100
 #define PWM_MAX_DTEST_LINES		4
-#define QPNP_HAP_EXT_PWM_DTEST_MASK	GENMASK(6, 4)
+#define QPNP_HAP_EXT_PWM_DTEST_MASK	0x0F
 #define QPNP_HAP_EXT_PWM_DTEST_SHFT	4
 #define QPNP_HAP_EXT_PWM_PEAK_DATA	0x7F
 #define QPNP_HAP_EXT_PWM_HALF_DUTY	50
@@ -268,8 +270,9 @@ struct qpnp_pwm_info {
  *  @ reg_play - play register
  *  @ lra_res_cal_period - period for resonance calibration
  *  @ sc_duration - counter to determine the duration of short circuit condition
- *  @ lra_hw_auto_resonance - enable hardware auto resonance
  *  @ state - current state of haptics
+ *  @ use_play_irq - play irq usage state
+ *  @ use_sc_irq - short circuit irq usage state
  *  @ wf_update - waveform update flag
  *  @ pwm_cfg_state - pwm mode configuration state
  *  @ buffer_cfg_state - buffer mode configuration state
@@ -293,7 +296,6 @@ struct qpnp_hap {
 	struct qpnp_pwm_info		pwm_info;
 	struct mutex			lock;
 	struct mutex			wf_lock;
-	spinlock_t			bus_lock;
 	struct completion		completion;
 	enum qpnp_hap_mode		play_mode;
 	enum qpnp_hap_auto_res_mode	auto_res_mode;
@@ -324,6 +326,8 @@ struct qpnp_hap {
 	u8				sc_duration;
 	u8				ext_pwm_dtest_line;
 	bool				state;
+	bool				use_play_irq;
+	bool				use_sc_irq;
 	bool				manage_pon_supply;
 	bool				wf_update;
 	bool				pwm_cfg_state;
@@ -344,65 +348,60 @@ static struct workqueue_struct *vibqueue;
 vibrator*/
 
 /* helper to read a pmic register */
-static int qpnp_hap_read_reg(struct qpnp_hap *hap, u16 addr, u8 *val)
+static int qpnp_hap_read_reg(struct qpnp_hap *hap, u8 *data, u16 addr)
 {
 	int rc;
-	uint tmp;
+	uint val;
 
-	rc = regmap_read(hap->regmap, addr, &tmp);
+	rc = regmap_read(hap->regmap, addr, &val);
 	if (rc < 0)
-		pr_err("Error reading address: %X - ret %X\n", addr, rc);
-	*val = (u8)tmp;
+		dev_err(&hap->pdev->dev,
+			"Error reading address: %X - ret %X\n", addr, rc);
+	*data = (u8)val;
 	return rc;
 }
 
 /* helper to write a pmic register */
-static int qpnp_hap_write_reg(struct qpnp_hap *hap, u16 addr, u8 val)
+static int qpnp_hap_write_reg(struct qpnp_hap *hap, u8 *data, u16 addr)
 {
-	unsigned long flags;
 	int rc;
 
-	spin_lock_irqsave(&hap->bus_lock, flags);
-	rc = regmap_write(hap->regmap, addr, val);
+	rc = regmap_write(hap->regmap, addr, *data);
 	if (rc < 0)
-		pr_err("Error writing address: %X - ret %X\n", addr, rc);
+		dev_err(&hap->pdev->dev,
+			"Error writing address: %X - ret %X\n", addr, rc);
 
-	spin_unlock_irqrestore(&hap->bus_lock, flags);
-	if (!rc)
-		pr_debug("wrote: HAP_0x%x = 0x%x\n", addr, val);
+	dev_dbg(&hap->pdev->dev, "write: HAP_0x%x = 0x%x\n", addr, *data);
 	return rc;
 }
 
 /* helper to access secure registers */
 static int qpnp_hap_sec_access(struct qpnp_hap *hap)
 {
-	unsigned long flags;
 	int rc;
+	u8 reg = QPNP_HAP_SEC_UNLOCK;
 
-	spin_lock_irqsave(&hap->bus_lock, flags);
-	rc = regmap_update_bits(hap->regmap, addr, mask, val);
-	if (rc < 0)
-		pr_err("Error writing address: %X - ret %X\n", addr, rc);
+	rc = qpnp_hap_write_reg(hap, &reg,
+		QPNP_HAP_SEC_ACCESS_REG(hap->base));
+	if (rc)
+		return rc;
 
-	spin_unlock_irqrestore(&hap->bus_lock, flags);
-	if (!rc)
-		pr_debug("wrote: HAP_0x%x = 0x%x\n", addr, val);
-	return rc;
+	return 0;
 }
 
 static void qpnp_handle_sc_irq(struct work_struct *work)
 {
 	struct qpnp_hap *hap = container_of(work,
 				struct qpnp_hap, sc_work.work);
-	u8 val;
+	u8 val, reg;
 
-	qpnp_hap_read_reg(hap, QPNP_HAP_STATUS(hap->base), &val);
+	qpnp_hap_read_reg(hap, &val, QPNP_HAP_STATUS(hap->base));
 
 	/* clear short circuit register */
 	if (val & SC_FOUND_BIT) {
 		hap->sc_duration++;
-		val = QPNP_HAP_SC_CLR;
-		qpnp_hap_write_reg(hap, QPNP_HAP_SC_CLR_REG(hap->base), val);
+		reg = QPNP_HAP_SC_CLR;
+		qpnp_hap_write_reg(hap, &reg, QPNP_HAP_SC_CLR_REG(hap->base));
 	}
 }
 
@@ -437,12 +436,14 @@ static int qpnp_hap_mod_enable(struct qpnp_hap *hap, int on)
 		}
 
 		if (i >= QPNP_HAP_MAX_RETRIES)
-			pr_debug("Haptics Busy. Force disable\n");
+			dev_dbg(&hap->pdev->dev,
+				"Haptics Busy. Force disable\n");
 
 		val &= ~QPNP_HAP_EN;
 	}
 
-	rc = qpnp_hap_write_reg(hap, QPNP_HAP_EN_CTL_REG(hap->base), val);
+	rc = qpnp_hap_write_reg(hap, &val,
+			QPNP_HAP_EN_CTL_REG(hap->base));
 	if (rc < 0)
 		return rc;
 
@@ -462,7 +463,8 @@ static int qpnp_hap_play(struct qpnp_hap *hap, int on)
 	else
 		val &= ~QPNP_HAP_PLAY_EN;
 
-	rc = qpnp_hap_write_reg(hap, QPNP_HAP_PLAY_REG(hap->base), val);
+	rc = qpnp_hap_write_reg(hap, &val,
+			QPNP_HAP_PLAY_REG(hap->base));
 	if (rc < 0)
 		return rc;
 
@@ -482,7 +484,7 @@ static ssize_t qpnp_hap_dump_regs_show(struct device *dev,
 	u8 val;
 
 	for (i = 0; i < ARRAY_SIZE(qpnp_hap_dbg_regs); i++) {
-		qpnp_hap_read_reg(hap, hap->base + qpnp_hap_dbg_regs[i], &val);
+		qpnp_hap_read_reg(hap, &val, hap->base + qpnp_hap_dbg_regs[i]);
 		count += snprintf(buf + count, PAGE_SIZE - count,
 				"qpnp_haptics: REG_0x%x = 0x%x\n",
 				hap->base + qpnp_hap_dbg_regs[i],
@@ -500,15 +502,15 @@ static irqreturn_t qpnp_hap_play_irq(int irq, void *_hap)
 {
 	struct qpnp_hap *hap = _hap;
 	int i, rc;
-	u8 val;
+	u8 reg;
 
 	mutex_lock(&hap->wf_lock);
 
 	/* Configure WAVE_SAMPLE1 to WAVE_SAMPLE8 register */
 	for (i = 0; i < QPNP_HAP_WAV_SAMP_LEN && hap->wf_update; i++) {
-		val = hap->wave_samp[i] = hap->shadow_wave_samp[i];
-		rc = qpnp_hap_write_reg(hap,
-			QPNP_HAP_WAV_S_REG_BASE(hap->base) + i, val);
+		reg = hap->wave_samp[i] = hap->shadow_wave_samp[i];
+		rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_S_REG_BASE(hap->base) + i);
 		if (rc)
 			goto unlock;
 	}
@@ -525,12 +527,13 @@ static irqreturn_t qpnp_hap_sc_irq(int irq, void *_hap)
 {
 	struct qpnp_hap *hap = _hap;
 	int rc;
+	u8 disable_haptics = 0x00;
 	u8 val;
 
-	pr_debug("Short circuit detected\n");
+	dev_dbg(&hap->pdev->dev, "Short circuit detected\n");
 
 	if (hap->sc_duration < SC_MAX_DURATION) {
-		qpnp_hap_read_reg(hap, QPNP_HAP_STATUS(hap->base), &val);
+		qpnp_hap_read_reg(hap, &val, QPNP_HAP_STATUS(hap->base));
 		if (val & SC_FOUND_BIT)
 			schedule_delayed_work(&hap->sc_work,
 					QPNP_HAP_SC_IRQ_STATUS_DELAY);
@@ -540,10 +543,10 @@ static irqreturn_t qpnp_hap_sc_irq(int irq, void *_hap)
 		/* Disable haptics module if the duration of short circuit
 		 * exceeds the maximum limit (5 secs).
 		 */
-		val = 0;
-		rc = qpnp_hap_write_reg(hap, QPNP_HAP_EN_CTL_REG(hap->base),
-			val);
-		pr_err("Haptics disabled permanently due to short circuit\n");
+		rc = qpnp_hap_write_reg(hap, &disable_haptics,
+					QPNP_HAP_EN_CTL_REG(hap->base));
+		dev_err(&hap->pdev->dev,
+			"Haptics disabled permanently due to short circuit\n");
 	}
 
 	return IRQ_HANDLED;
@@ -552,8 +555,8 @@ static irqreturn_t qpnp_hap_sc_irq(int irq, void *_hap)
 /* configuration api for buffer mode */
 static int qpnp_hap_buffer_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	int rc, i;
+	u8 reg = 0;
+	int rc, i, temp;
 
 	/* Configure the WAVE_REPEAT register */
 	if (hap->wave_rep_cnt < QPNP_HAP_WAV_REP_MIN)
@@ -566,20 +569,42 @@ static int qpnp_hap_buffer_config(struct qpnp_hap *hap)
 	else if (hap->wave_s_rep_cnt > QPNP_HAP_WAV_S_REP_MAX)
 		hap->wave_s_rep_cnt = QPNP_HAP_WAV_S_REP_MAX;
 
-	val = ilog2(hap->wave_rep_cnt) << QPNP_HAP_WAV_REP_SHIFT |
-			ilog2(hap->wave_s_rep_cnt);
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_WAV_REP_REG(hap->base),
-			QPNP_HAP_WAV_REP_MASK | QPNP_HAP_WAV_S_REP_MASK, val);
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_WAV_REP_MASK;
+	temp = fls(hap->wave_rep_cnt) - 1;
+	reg |= (temp << QPNP_HAP_WAV_REP_SHFT);
+	reg &= QPNP_HAP_WAV_S_REP_MASK;
+	temp = fls(hap->wave_s_rep_cnt) - 1;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
 	if (rc)
 		return rc;
 
 	/* Configure WAVE_SAMPLE1 to WAVE_SAMPLE8 register */
-	for (i = 0, val = 0; i < QPNP_HAP_WAV_SAMP_LEN; i++) {
-		val = hap->wave_samp[i];
-		rc = qpnp_hap_write_reg(hap,
-			QPNP_HAP_WAV_S_REG_BASE(hap->base) + i, val);
+	for (i = 0, reg = 0; i < QPNP_HAP_WAV_SAMP_LEN; i++) {
+		reg = hap->wave_samp[i];
+		rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_S_REG_BASE(hap->base) + i);
 		if (rc)
 			return rc;
+	}
+
+	/* setup play irq */
+	if (hap->use_play_irq) {
+		rc = devm_request_threaded_irq(&hap->pdev->dev, hap->play_irq,
+			NULL, qpnp_hap_play_irq,
+			QPNP_IRQ_FLAGS,
+			"qpnp_play_irq", hap);
+		if (rc < 0) {
+			dev_err(&hap->pdev->dev,
+				"Unable to request play(%d) IRQ(err:%d)\n",
+				hap->play_irq, rc);
+			return rc;
+		}
 	}
 
 	hap->buffer_cfg_state = true;
@@ -589,41 +614,59 @@ static int qpnp_hap_buffer_config(struct qpnp_hap *hap)
 /* configuration api for pwm */
 static int qpnp_hap_pwm_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	int rc;
+	u8 reg = 0;
+	int rc, temp;
 
 	/* Configure the EXTERNAL_PWM register */
 	if (hap->ext_pwm_freq_khz <= QPNP_HAP_EXT_PWM_FREQ_25_KHZ) {
 		hap->ext_pwm_freq_khz = QPNP_HAP_EXT_PWM_FREQ_25_KHZ;
-		val = 0;
+		temp = 0;
 	} else if (hap->ext_pwm_freq_khz <=
 				QPNP_HAP_EXT_PWM_FREQ_50_KHZ) {
 		hap->ext_pwm_freq_khz = QPNP_HAP_EXT_PWM_FREQ_50_KHZ;
-		val = 1;
+		temp = 1;
 	} else if (hap->ext_pwm_freq_khz <=
 				QPNP_HAP_EXT_PWM_FREQ_75_KHZ) {
 		hap->ext_pwm_freq_khz = QPNP_HAP_EXT_PWM_FREQ_75_KHZ;
-		val = 2;
+		temp = 2;
 	} else {
 		hap->ext_pwm_freq_khz = QPNP_HAP_EXT_PWM_FREQ_100_KHZ;
-		val = 3;
+		temp = 3;
 	}
 
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_EXT_PWM_REG(hap->base),
-			QPNP_HAP_EXT_PWM_MASK, val);
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_EXT_PWM_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_EXT_PWM_MASK;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_EXT_PWM_REG(hap->base));
 	if (rc)
 		return rc;
 
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_TEST2_REG(hap->base));
+	if (rc)
+		return rc;
 	if (!hap->ext_pwm_dtest_line ||
 			hap->ext_pwm_dtest_line > PWM_MAX_DTEST_LINES) {
-		pr_err("invalid dtest line\n");
+		dev_err(&hap->pdev->dev, "invalid dtest line\n");
 		return -EINVAL;
 	}
 
 	/* disable auto res for PWM mode */
-	val = hap->ext_pwm_dtest_line << QPNP_HAP_EXT_PWM_DTEST_SHFT;
-	rc = qpnp_hap_sec_masked_write_reg(hap, QPNP_HAP_TEST2_REG(hap->base),
-		QPNP_HAP_EXT_PWM_DTEST_MASK | QPNP_HAP_AUTO_RES_MASK, val);
+	reg &= QPNP_HAP_EXT_PWM_DTEST_MASK;
+	temp = hap->ext_pwm_dtest_line << QPNP_HAP_EXT_PWM_DTEST_SHFT;
+	reg |= temp;
+
+	/* TEST2 is a secure access register */
+	rc = qpnp_hap_sec_access(hap);
+	if (rc)
+		return rc;
+
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_TEST2_REG(hap->base));
 	if (rc)
 		return rc;
 
@@ -631,7 +674,7 @@ static int qpnp_hap_pwm_config(struct qpnp_hap *hap)
 				hap->pwm_info.duty_us * NSEC_PER_USEC,
 				hap->pwm_info.period_us * NSEC_PER_USEC);
 	if (rc < 0) {
-		pr_err("hap pwm config failed\n");
+		dev_err(&hap->pdev->dev, "hap pwm config failed\n");
 		pwm_free(hap->pwm_info.pwm_dev);
 		return -ENODEV;
 	}
@@ -641,96 +684,29 @@ static int qpnp_hap_pwm_config(struct qpnp_hap *hap)
 	return 0;
 }
 
-static int qpnp_hap_lra_auto_res_config(struct qpnp_hap *hap)
-{
-	int rc;
-	u8 val, mask;
-
-	/* disable auto resonance for ERM */
-	if (hap->act_type == QPNP_HAP_ERM) {
-		val = 0x00;
-		rc = qpnp_hap_write_reg(hap,
-			QPNP_HAP_LRA_AUTO_RES_REG(hap->base), val);
-		return rc;
-	}
-
-	if (hap->lra_hw_auto_resonance) {
-		rc = qpnp_hap_masked_write_reg(hap,
-			QPNP_HAP_PM660_HW_AUTO_RES_MODE_BIT,
-			QPNP_HAP_AUTO_RES_CTRL(hap->base),
-			QPNP_HAP_PM660_HW_AUTO_RES_MODE_BIT);
-		if (rc)
-			return rc;
-	}
-
-	if (hap->lra_res_cal_period < QPNP_HAP_RES_CAL_PERIOD_MIN)
-		hap->lra_res_cal_period = QPNP_HAP_RES_CAL_PERIOD_MIN;
-
-	if (hap->pmic_subtype == PM660_SUBTYPE) {
-		if (hap->lra_res_cal_period >
-				QPNP_HAP_PM660_RES_CAL_PERIOD_MAX)
-			hap->lra_res_cal_period =
-				QPNP_HAP_PM660_RES_CAL_PERIOD_MAX;
-
-		if (hap->auto_res_mode == QPNP_HAP_PM660_AUTO_RES_QWD)
-			hap->lra_res_cal_period = 0;
-	} else {
-		if (hap->lra_res_cal_period > QPNP_HAP_RES_CAL_PERIOD_MAX)
-			hap->lra_res_cal_period = QPNP_HAP_RES_CAL_PERIOD_MAX;
-	}
-
-	val = mask = 0;
-	if (hap->lra_res_cal_period)
-		val = ilog2(hap->lra_res_cal_period /
-				QPNP_HAP_RES_CAL_PERIOD_MIN);
-
-	if (hap->pmic_subtype == PM660_SUBTYPE) {
-		val |= hap->auto_res_mode <<
-			QPNP_HAP_PM660_AUTO_RES_MODE_SHIFT;
-		mask = QPNP_HAP_PM660_AUTO_RES_MODE_BIT;
-		val |= hap->lra_high_z <<
-				QPNP_HAP_PM660_CALIBRATE_DURATION_SHIFT;
-		mask |= QPNP_HAP_PM660_CALIBRATE_DURATION_MASK;
-		if (hap->lra_qwd_drive_duration != -EINVAL) {
-			val |= hap->lra_qwd_drive_duration <<
-				QPNP_HAP_PM660_QWD_DRIVE_DURATION_SHIFT;
-			mask |= QPNP_HAP_PM660_QWD_DRIVE_DURATION_BIT;
-		}
-		if (hap->calibrate_at_eop != -EINVAL) {
-			val |= hap->calibrate_at_eop <<
-				QPNP_HAP_PM660_CALIBRATE_AT_EOP_SHIFT;
-			mask |= QPNP_HAP_PM660_CALIBRATE_AT_EOP_BIT;
-		}
-		mask |= QPNP_HAP_PM660_LRA_RES_CAL_PER_MASK;
-	} else {
-		val |= (hap->auto_res_mode << QPNP_HAP_AUTO_RES_MODE_SHIFT);
-		val |= (hap->lra_high_z << QPNP_HAP_LRA_HIGH_Z_SHIFT);
-		mask = QPNP_HAP_AUTO_RES_MODE_MASK | QPNP_HAP_LRA_HIGH_Z_MASK |
-			QPNP_HAP_LRA_RES_CAL_PER_MASK;
-	}
-
-	rc = qpnp_hap_masked_write_reg(hap,
-			QPNP_HAP_LRA_AUTO_RES_REG(hap->base), mask, val);
-	return rc;
-}
-
 /* configuration api for play mode */
 static int qpnp_hap_play_mode_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	int rc;
+	u8 reg = 0;
+	int rc, temp;
 
-	val = hap->play_mode << QPNP_HAP_WF_SOURCE_SHIFT;
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_SEL_REG(hap->base),
-			QPNP_HAP_WF_SOURCE_MASK, val);
-	return rc;
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_PLAY_MODE_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_PLAY_MODE_MASK;
+	temp = hap->play_mode << QPNP_HAP_PLAY_MODE_SHFT;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_PLAY_MODE_REG(hap->base));
+	if (rc)
+		return rc;
+	return 0;
 }
 
-/* configuration api for max voltage */
+/* configuration api for max volatge */
 static int qpnp_hap_vmax_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	int rc;
+	u8 reg = 0;
+	int rc, temp;
 
 	if (hap->vmax_mv < QPNP_HAP_VMAX_MIN_MV)
 		hap->vmax_mv = QPNP_HAP_VMAX_MIN_MV;
@@ -748,77 +724,34 @@ static int qpnp_hap_vmax_config(struct qpnp_hap *hap)
 	if (rc)
 		return rc;
 
-/* configuration api for ilim */
-static int qpnp_hap_ilim_config(struct qpnp_hap *hap)
-{
-	u8 val = 0;
-	int rc;
-
-	if (hap->ilim_ma < QPNP_HAP_ILIM_MIN_MA)
-		hap->ilim_ma = QPNP_HAP_ILIM_MIN_MA;
-	else if (hap->ilim_ma > QPNP_HAP_ILIM_MAX_MA)
-		hap->ilim_ma = QPNP_HAP_ILIM_MAX_MA;
-
-	val = (hap->ilim_ma / QPNP_HAP_ILIM_MIN_MA) - 1;
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_ILIM_REG(hap->base),
-			QPNP_HAP_ILIM_MASK, val);
-	return rc;
+	return 0;
 }
 
 /* configuration api for short circuit debounce */
 static int qpnp_hap_sc_deb_config(struct qpnp_hap *hap)
 {
-	u8 val = 0;
-	int rc;
+	u8 reg = 0;
+	int rc, temp;
 
 	if (hap->sc_deb_cycles < QPNP_HAP_SC_DEB_CYCLES_MIN)
 		hap->sc_deb_cycles = QPNP_HAP_SC_DEB_CYCLES_MIN;
 	else if (hap->sc_deb_cycles > QPNP_HAP_SC_DEB_CYCLES_MAX)
 		hap->sc_deb_cycles = QPNP_HAP_SC_DEB_CYCLES_MAX;
 
-	if (hap->sc_deb_cycles != QPNP_HAP_SC_DEB_CYCLES_MIN)
-		val = ilog2(hap->sc_deb_cycles /
-			QPNP_HAP_DEF_SC_DEB_CYCLES) + 1;
-	else
-		val = QPNP_HAP_SC_DEB_CYCLES_MIN;
-
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_SC_DEB_REG(hap->base),
-			QPNP_HAP_SC_DEB_MASK, val);
-
-	return rc;
-}
-
-static int qpnp_hap_int_pwm_config(struct qpnp_hap *hap)
-{
-	int rc;
-	u8 val;
-
-	if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_253_KHZ) {
-		if (hap->pmic_subtype == PM660_SUBTYPE) {
-			hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_505_KHZ;
-			val = 1;
-		} else {
-			hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_253_KHZ;
-			val = 0;
-		}
-	} else if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_505_KHZ) {
-		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_505_KHZ;
-		val = 1;
-	} else if (hap->int_pwm_freq_khz <= QPNP_HAP_INT_PWM_FREQ_739_KHZ) {
-		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_739_KHZ;
-		val = 2;
-	} else {
-		hap->int_pwm_freq_khz = QPNP_HAP_INT_PWM_FREQ_1076_KHZ;
-		val = 3;
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_SC_DEB_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_SC_DEB_MASK;
+	if (hap->sc_deb_cycles) {
+		temp = fls(hap->sc_deb_cycles) - 1;
+		reg |= temp - QPNP_HAP_SC_DEB_SUB;
 	}
 
 	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_SC_DEB_REG(hap->base));
 	if (rc)
 		return rc;
 
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_PWM_CAP_REG(hap->base),
-			QPNP_HAP_INT_PWM_MASK, val);
-	return rc;
+	return 0;
 }
 
 /* DT parsing api for buffer mode */
@@ -835,7 +768,7 @@ static int qpnp_hap_parse_buffer_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->wave_rep_cnt = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read rep cnt\n");
+		dev_err(&pdev->dev, "Unable to read rep cnt\n");
 		return rc;
 	}
 
@@ -845,14 +778,14 @@ static int qpnp_hap_parse_buffer_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->wave_s_rep_cnt = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read samp rep cnt\n");
+		dev_err(&pdev->dev, "Unable to read samp rep cnt\n");
 		return rc;
 	}
 
 	prop = of_find_property(pdev->dev.of_node,
 			"qcom,wave-samples", &temp);
 	if (!prop || temp != QPNP_HAP_WAV_SAMP_LEN) {
-		pr_err("Invalid wave samples, use default");
+		dev_err(&pdev->dev, "Invalid wave samples, use default");
 		for (i = 0; i < QPNP_HAP_WAV_SAMP_LEN; i++)
 			hap->wave_samp[i] = QPNP_HAP_WAV_SAMP_MAX;
 	} else {
@@ -867,6 +800,16 @@ static int qpnp_hap_parse_buffer_dt(struct qpnp_hap *hap)
 			hap->wave_samp_overdrive[i] = QPNP_HAP_WAV_SAMP_MAX;
 	} else {
 		memcpy(hap->wave_samp_overdrive, prop->value, QPNP_HAP_WAV_SAMP_LEN);
+	}
+
+	hap->use_play_irq = of_property_read_bool(pdev->dev.of_node,
+				"qcom,use-play-irq");
+	if (hap->use_play_irq) {
+		hap->play_irq = platform_get_irq_byname(hap->pdev, "play-irq");
+		if (hap->play_irq < 0) {
+			dev_err(&pdev->dev, "Unable to get play irq\n");
+			return hap->play_irq;
+		}
 	}
 
 	return 0;
@@ -885,7 +828,7 @@ static int qpnp_hap_parse_pwm_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->ext_pwm_freq_khz = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read ext pwm freq\n");
+		dev_err(&pdev->dev, "Unable to read ext pwm freq\n");
 		return rc;
 	}
 
@@ -900,7 +843,7 @@ static int qpnp_hap_parse_pwm_dt(struct qpnp_hap *hap)
 
 	if (IS_ERR(hap->pwm_info.pwm_dev)) {
 		rc = PTR_ERR(hap->pwm_info.pwm_dev);
-		pr_err("Cannot get PWM device rc:(%d)\n", rc);
+		dev_err(&pdev->dev, "Cannot get PWM device rc:(%d)\n", rc);
 		hap->pwm_info.pwm_dev = NULL;
 		return rc;
 	}
@@ -935,7 +878,7 @@ static ssize_t qpnp_hap_wf_samp_show(struct device *dev, char *buf, int index)
 					 timed_dev);
 
 	if (index < 0 || index >= QPNP_HAP_WAV_SAMP_LEN) {
-		pr_err("Invalid sample index(%d)\n", index);
+		dev_err(dev, "Invalid sample index(%d)\n", index);
 		return -EINVAL;
 	}
 
@@ -1001,7 +944,7 @@ static ssize_t qpnp_hap_wf_samp_store(struct device *dev,
 	int data, rc;
 
 	if (index < 0 || index >= QPNP_HAP_WAV_SAMP_LEN) {
-		pr_err("Invalid sample index(%d)\n", index);
+		dev_err(dev, "Invalid sample index(%d)\n", index);
 		return -EINVAL;
 	}
 
@@ -1010,7 +953,7 @@ static ssize_t qpnp_hap_wf_samp_store(struct device *dev,
 		return rc;
 
 	if (data < 0 || data > 0xff) {
-		pr_err("Invalid sample wf_%d (%d)\n", index, data);
+		dev_err(dev, "Invalid sample wf_%d (%d)\n", index, data);
 		return -EINVAL;
 	}
 
@@ -1222,8 +1165,8 @@ static ssize_t qpnp_hap_wf_rep_store(struct device *dev,
 	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
 	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
 					 timed_dev);
-	int data, rc;
-	u8 val;
+	int data, rc, temp;
+	u8 reg;
 
 	rc = kstrtoint(buf, 10, &data);
 	if (rc)
@@ -1234,11 +1177,19 @@ static ssize_t qpnp_hap_wf_rep_store(struct device *dev,
 	else if (data > QPNP_HAP_WAV_REP_MAX)
 		data = QPNP_HAP_WAV_REP_MAX;
 
-	val = ilog2(data) << QPNP_HAP_WAV_REP_SHIFT;
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_WAV_REP_REG(hap->base),
-			QPNP_HAP_WAV_REP_MASK, val);
-	if (!rc)
-		hap->wave_rep_cnt = data;
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_WAV_REP_MASK;
+	temp = fls(data) - 1;
+	reg |= (temp << QPNP_HAP_WAV_REP_SHFT);
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
+	if (rc)
+		return rc;
+
+	hap->wave_rep_cnt = data;
 
 	return count;
 }
@@ -1261,8 +1212,8 @@ static ssize_t qpnp_hap_wf_s_rep_store(struct device *dev,
 	struct timed_output_dev *timed_dev = dev_get_drvdata(dev);
 	struct qpnp_hap *hap = container_of(timed_dev, struct qpnp_hap,
 					 timed_dev);
-	int data, rc;
-	u8 val;
+	int data, rc, temp;
+	u8 reg;
 
 	rc = kstrtoint(buf, 10, &data);
 	if (rc)
@@ -1273,11 +1224,19 @@ static ssize_t qpnp_hap_wf_s_rep_store(struct device *dev,
 	else if (data > QPNP_HAP_WAV_S_REP_MAX)
 		data = QPNP_HAP_WAV_S_REP_MAX;
 
-	val = ilog2(hap->wave_s_rep_cnt);
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_WAV_REP_REG(hap->base),
-			QPNP_HAP_WAV_S_REP_MASK, val);
-	if (!rc)
-		hap->wave_s_rep_cnt = data;
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_WAV_S_REP_MASK;
+	temp = fls(data) - 1;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_REP_REG(hap->base));
+	if (rc)
+		return rc;
+
+	hap->wave_s_rep_cnt = data;
 
 	return count;
 }
@@ -1550,7 +1509,7 @@ static int qpnp_hap_auto_res_enable(struct qpnp_hap *hap, int enable)
 	if (rc)
 		return rc;
 
-	return rc;
+	return 0;
 }
 
 static void update_lra_frequency(struct qpnp_hap *hap)
@@ -1559,10 +1518,10 @@ static void update_lra_frequency(struct qpnp_hap *hap)
 	u32 temp = 0;
 	int lra_init_freq;
 
-	qpnp_hap_read_reg(hap, QPNP_HAP_LRA_AUTO_RES_LO(hap->base),
-		&lra_auto_res_lo);
-	qpnp_hap_read_reg(hap, QPNP_HAP_LRA_AUTO_RES_HI(hap->base),
-		&lra_auto_res_hi);
+	qpnp_hap_read_reg(hap, &lra_auto_res_lo,
+				QPNP_HAP_LRA_AUTO_RES_LO(hap->base));
+	qpnp_hap_read_reg(hap, &lra_auto_res_hi,
+				QPNP_HAP_LRA_AUTO_RES_HI(hap->base));
 
 	lra_auto_res_hi = lra_auto_res_hi >> 4;
 	temp |= lra_auto_res_hi;
@@ -1712,8 +1671,7 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 
 			rc = qpnp_hap_mod_enable(hap, on);
 			if (hap->act_type == QPNP_HAP_LRA &&
-					hap->correct_lra_drive_freq &&
-					!hap->lra_hw_auto_resonance) {
+					hap->correct_lra_drive_freq) {
 				hrtimer_cancel(&hap->auto_res_err_poll_timer);
 				calculate_lra_code(hap);
 			}
@@ -1732,8 +1690,7 @@ static void qpnp_hap_td_enable(struct timed_output_dev *dev, int value)
 	mutex_lock(&hap->lock);
 
 	if (hap->act_type == QPNP_HAP_LRA &&
-				hap->correct_lra_drive_freq &&
-				!hap->lra_hw_auto_resonance)
+				hap->correct_lra_drive_freq)
 		hrtimer_cancel(&hap->auto_res_err_poll_timer);
 
 	hrtimer_cancel(&hap->hap_timer);
@@ -1771,7 +1728,7 @@ int qpnp_hap_play_byte(u8 data, bool on)
 	}
 
 	if (hap->play_mode != QPNP_HAP_PWM) {
-		pr_err("only PWM mode is supported\n");
+		dev_err(&hap->pdev->dev, "only PWM mode is supported\n");
 		return -EINVAL;
 	}
 
@@ -1812,7 +1769,8 @@ int qpnp_hap_play_byte(u8 data, bool on)
 	if (rc)
 		return rc;
 
-	pr_debug("data=0x%x duty_per=%d\n", data, duty_percent);
+	dev_dbg(&hap->pdev->dev, "data=0x%x duty_per=%d\n", data,
+		duty_percent);
 
 	rc = qpnp_hap_set(hap, true);
 
@@ -1845,8 +1803,8 @@ static void qpnp_hap_worker(struct work_struct *work)
 	 * exceeds the maximum limit (5 secs).
 	 */
 	if (hap->sc_duration == SC_MAX_DURATION) {
-		rc = qpnp_hap_write_reg(hap, QPNP_HAP_EN_CTL_REG(hap->base),
-			val);
+		rc = qpnp_hap_write_reg(hap, &val,
+				QPNP_HAP_EN_CTL_REG(hap->base));
 	} else {
 		if (hap->play_mode == QPNP_HAP_PWM)
 			qpnp_hap_mod_enable(hap, hap->state);
@@ -1976,7 +1934,18 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 		return rc;
 
 	/* Configure the ILIM register */
-	rc = qpnp_hap_ilim_config(hap);
+	if (hap->ilim_ma < QPNP_HAP_ILIM_MIN_MA)
+		hap->ilim_ma = QPNP_HAP_ILIM_MIN_MA;
+	else if (hap->ilim_ma > QPNP_HAP_ILIM_MAX_MA)
+		hap->ilim_ma = QPNP_HAP_ILIM_MAX_MA;
+
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_ILIM_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_ILIM_MASK;
+	temp = (hap->ilim_ma / QPNP_HAP_ILIM_MIN_MA) >> 1;
+	reg |= temp;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_ILIM_REG(hap->base));
 	if (rc)
 		return rc;
 
@@ -2019,8 +1988,14 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 		return rc;
 
 	/* Configure the WAVE SHAPE register */
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_CFG2_REG(hap->base),
-			QPNP_HAP_WAV_SHAPE_MASK, hap->wave_shape);
+	rc = qpnp_hap_read_reg(hap, &reg,
+			QPNP_HAP_WAV_SHAPE_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_WAV_SHAPE_MASK;
+	reg |= hap->wave_shape;
+	rc = qpnp_hap_write_reg(hap, &reg,
+			QPNP_HAP_WAV_SHAPE_REG(hap->base));
 	if (rc)
 		return rc;
 
@@ -2082,34 +2057,38 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 		calculate_lra_code(hap);
 
 	/* Configure BRAKE register */
-	rc = qpnp_hap_masked_write_reg(hap, QPNP_HAP_EN_CTL2_REG(hap->base),
-			QPNP_HAP_BRAKE_MASK, (u8)hap->en_brake);
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_EN_CTL2_REG(hap->base));
+	if (rc < 0)
+		return rc;
+	reg &= QPNP_HAP_BRAKE_MASK;
+	reg |= hap->en_brake;
+	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_EN_CTL2_REG(hap->base));
 	if (rc)
 		return rc;
 
 	if (hap->en_brake && hap->sup_brake_pat) {
-		for (i = QPNP_HAP_BRAKE_PAT_LEN - 1, val = 0; i >= 0; i--) {
+		for (i = QPNP_HAP_BRAKE_PAT_LEN - 1, reg = 0; i >= 0; i--) {
 			hap->brake_pat[i] &= QPNP_HAP_BRAKE_PAT_MASK;
 			temp = i << 1;
-			val |= hap->brake_pat[i] << temp;
+			reg |= hap->brake_pat[i] << temp;
 		}
-		rc = qpnp_hap_write_reg(hap, QPNP_HAP_BRAKE_REG(hap->base),
-				val);
+		rc = qpnp_hap_write_reg(hap, &reg,
+					QPNP_HAP_BRAKE_REG(hap->base));
 		if (rc)
 			return rc;
 	}
 
 	/* Cache enable control register */
-	rc = qpnp_hap_read_reg(hap, QPNP_HAP_EN_CTL_REG(hap->base), &val);
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_EN_CTL_REG(hap->base));
 	if (rc < 0)
 		return rc;
-	hap->reg_en_ctl = val;
+	hap->reg_en_ctl = reg;
 
 	/* Cache play register */
-	rc = qpnp_hap_read_reg(hap, QPNP_HAP_PLAY_REG(hap->base), &val);
+	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_PLAY_REG(hap->base));
 	if (rc < 0)
 		return rc;
-	hap->reg_play = val;
+	hap->reg_play = reg;
 
 	if (hap->play_mode == QPNP_HAP_BUFFER)
 		rc = qpnp_hap_buffer_config(hap);
@@ -2121,29 +2100,15 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 	if (rc)
 		return rc;
 
-	/* setup play irq */
-	if (hap->play_irq >= 0) {
-		rc = devm_request_threaded_irq(&hap->pdev->dev, hap->play_irq,
-			NULL, qpnp_hap_play_irq, IRQF_ONESHOT, "qpnp_hap_play",
-			hap);
-		if (rc < 0) {
-			pr_err("Unable to request play(%d) IRQ(err:%d)\n",
-				hap->play_irq, rc);
-			return rc;
-		}
-
-		/* use play_irq only for buffer mode */
-		if (hap->play_mode != QPNP_HAP_BUFFER)
-			disable_irq(hap->play_irq);
-	}
-
 	/* setup short circuit irq */
-	if (hap->sc_irq >= 0) {
+	if (hap->use_sc_irq) {
 		rc = devm_request_threaded_irq(&hap->pdev->dev, hap->sc_irq,
-			NULL, qpnp_hap_sc_irq, IRQF_ONESHOT, "qpnp_hap_sc",
-			hap);
+			NULL, qpnp_hap_sc_irq,
+			QPNP_IRQ_FLAGS,
+			"qpnp_sc_irq", hap);
 		if (rc < 0) {
-			pr_err("Unable to request sc(%d) IRQ(err:%d)\n",
+			dev_err(&hap->pdev->dev,
+				"Unable to request sc(%d) IRQ(err:%d)\n",
 				hap->sc_irq, rc);
 			return rc;
 		}
@@ -2158,38 +2123,10 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 {
 	struct platform_device *pdev = hap->pdev;
-	struct device_node *misc_node;
 	struct property *prop;
 	const char *temp_str;
 	u32 temp;
 	int rc;
-
-	if (of_find_property(pdev->dev.of_node, "qcom,pmic-misc", NULL)) {
-		misc_node = of_parse_phandle(pdev->dev.of_node,
-					"qcom,pmic-misc", 0);
-		if (!misc_node)
-			return -EINVAL;
-
-		rc = of_property_read_u32(pdev->dev.of_node,
-				"qcom,misc-clk-trim-error-reg", &temp);
-		if (rc < 0) {
-			pr_err("Missing misc-clk-trim-error-reg\n");
-			return rc;
-		}
-
-		if (!temp || temp > 0xFF) {
-			pr_err("Invalid misc-clk-trim-error-reg\n");
-			return -EINVAL;
-		}
-
-		hap->misc_clk_trim_error_reg = temp;
-		rc = qpnp_misc_read_reg(misc_node, hap->misc_clk_trim_error_reg,
-				&hap->clk_trim_error_code);
-		if (rc < 0) {
-			pr_err("Couldn't get clk_trim_error_code, rc=%d\n", rc);
-			return -EPROBE_DEFER;
-		}
-	}
 
 	hap->timeout_ms = QPNP_HAP_TIMEOUT_MS_MAX;
 	rc = of_property_read_u32(pdev->dev.of_node,
@@ -2197,7 +2134,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->timeout_ms = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read timeout\n");
+		dev_err(&pdev->dev, "Unable to read timeout\n");
 		return rc;
 	}
 
@@ -2210,11 +2147,11 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		else if (strcmp(temp_str, "lra") == 0)
 			hap->act_type = QPNP_HAP_LRA;
 		else {
-			pr_err("Invalid actuator type\n");
+			dev_err(&pdev->dev, "Invalid actuator type\n");
 			return -EINVAL;
 		}
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read actuator type\n");
+		dev_err(&pdev->dev, "Unable to read actuator type\n");
 		return rc;
 	}
 
@@ -2234,7 +2171,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 			else
 				hap->auto_res_mode = QPNP_HAP_AUTO_RES_ZXD_EOP;
 		} else if (rc != -EINVAL) {
-			pr_err("Unable to read auto res mode\n");
+			dev_err(&pdev->dev, "Unable to read auto res mode\n");
 			return rc;
 		}
 
@@ -2251,7 +2188,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 			else
 				hap->lra_high_z = QPNP_HAP_LRA_HIGH_Z_OPT3;
 		} else if (rc != -EINVAL) {
-			pr_err("Unable to read LRA high-z\n");
+			dev_err(&pdev->dev, "Unable to read LRA high-z\n");
 			return rc;
 		}
 
@@ -2261,7 +2198,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		if (!rc) {
 			hap->lra_res_cal_period = temp;
 		} else if (rc != -EINVAL) {
-			pr_err("Unable to read cal period\n");
+			dev_err(&pdev->dev, "Unable to read cal period\n");
 			return rc;
 		}
 
@@ -2286,11 +2223,11 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		else if (strcmp(temp_str, "audio") == 0)
 			hap->play_mode = QPNP_HAP_AUDIO;
 		else {
-			pr_err("Invalid play mode\n");
+			dev_err(&pdev->dev, "Invalid play mode\n");
 			return -EINVAL;
 		}
 	} else {
-		pr_err("Unable to read play mode\n");
+		dev_err(&pdev->dev, "Unable to read play mode\n");
 		return rc;
 	}
 
@@ -2301,7 +2238,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		hap->vmax_mv = temp;
 		hap->vmax_default_mv = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read vmax\n");
+		dev_err(&pdev->dev, "Unable to read vmax\n");
 		return rc;
 	}
 
@@ -2310,7 +2247,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->ilim_ma = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read ILim\n");
+		dev_err(&pdev->dev, "Unable to read ILim\n");
 		return rc;
 	}
 
@@ -2320,7 +2257,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->sc_deb_cycles = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read sc debounce\n");
+		dev_err(&pdev->dev, "Unable to read sc debounce\n");
 		return rc;
 	}
 
@@ -2330,7 +2267,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->int_pwm_freq_khz = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read int pwm freq\n");
+		dev_err(&pdev->dev, "Unable to read int pwm freq\n");
 		return rc;
 	}
 
@@ -2343,11 +2280,11 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		else if (strcmp(temp_str, "square") == 0)
 			hap->wave_shape = QPNP_HAP_WAV_SQUARE;
 		else {
-			pr_err("Unsupported wav shape\n");
+			dev_err(&pdev->dev, "Unsupported wav shape\n");
 			return -EINVAL;
 		}
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read wav shape\n");
+		dev_err(&pdev->dev, "Unable to read wav shape\n");
 		return rc;
 	}
 
@@ -2357,7 +2294,7 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	if (!rc) {
 		hap->wave_play_rate_us = temp;
 	} else if (rc != -EINVAL) {
-		pr_err("Unable to read play rate\n");
+		dev_err(&pdev->dev, "Unable to read play rate\n");
 		return rc;
 	}
 
@@ -2376,9 +2313,9 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		prop = of_find_property(pdev->dev.of_node,
 				"qcom,brake-pattern", &temp);
 		if (!prop) {
-			pr_info("brake pattern not found");
+			dev_info(&pdev->dev, "brake pattern not found");
 		} else if (temp != QPNP_HAP_BRAKE_PAT_LEN) {
-			pr_err("Invalid len of brake pattern\n");
+			dev_err(&pdev->dev, "Invalid len of brake pattern\n");
 			return -EINVAL;
 		} else {
 			hap->sup_brake_pat = true;
@@ -2387,14 +2324,14 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		}
 	}
 
-	hap->play_irq = platform_get_irq_byname(hap->pdev, "play-irq");
-	if (hap->play_irq < 0)
-		pr_warn("Unable to get play irq\n");
-
-	hap->sc_irq = platform_get_irq_byname(hap->pdev, "sc-irq");
-	if (hap->sc_irq < 0) {
-		pr_err("Unable to get sc irq\n");
-		return hap->sc_irq;
+	hap->use_sc_irq = of_property_read_bool(pdev->dev.of_node,
+				"qcom,use-sc-irq");
+	if (hap->use_sc_irq) {
+		hap->sc_irq = platform_get_irq_byname(hap->pdev, "sc-irq");
+		if (hap->sc_irq < 0) {
+			dev_err(&pdev->dev, "Unable to get sc irq\n");
+			return hap->sc_irq;
+		}
 	}
 
 	if (of_find_property(pdev->dev.of_node, "vcc_pon-supply", NULL))
@@ -2415,7 +2352,7 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 		return -ENOMEM;
 		hap->regmap = dev_get_regmap(pdev->dev.parent, NULL);
 		if (!hap->regmap) {
-			pr_err("Couldn't get parent's regmap\n");
+			dev_err(&pdev->dev, "Couldn't get parent's regmap\n");
 			return -EINVAL;
 		}
 
@@ -2423,7 +2360,8 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 
 	rc = of_property_read_u32(pdev->dev.of_node, "reg", &base);
 	if (rc < 0) {
-		pr_err("Couldn't find reg in node = %s rc = %d\n",
+		dev_err(&pdev->dev,
+			"Couldn't find reg in node = %s rc = %d\n",
 			pdev->dev.of_node->full_name, rc);
 		return rc;
 	}
@@ -2433,14 +2371,13 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 
 	rc = qpnp_hap_parse_dt(hap);
 	if (rc) {
-		pr_err("DT parsing failed\n");
+		dev_err(&pdev->dev, "DT parsing failed\n");
 		return rc;
 	}
 
-	spin_lock_init(&hap->bus_lock);
 	rc = qpnp_hap_config(hap);
 	if (rc) {
-		pr_err("hap config failed\n");
+		dev_err(&pdev->dev, "hap config failed\n");
 		return rc;
 	}
 
@@ -2472,7 +2409,7 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 
 	rc = timed_output_dev_register(&hap->timed_dev);
 	if (rc < 0) {
-		pr_err("timed_output registration failed\n");
+		dev_err(&pdev->dev, "timed_output registration failed\n");
 		goto timed_output_fail;
 	}
 
@@ -2480,7 +2417,7 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 		rc = sysfs_create_file(&hap->timed_dev.dev->kobj,
 				&qpnp_hap_attrs[i].attr);
 		if (rc < 0) {
-			pr_err("sysfs creation failed\n");
+			dev_err(&pdev->dev, "sysfs creation failed\n");
 			goto sysfs_fail;
 		}
 	}
@@ -2489,7 +2426,8 @@ static int qpnp_haptic_probe(struct platform_device *pdev)
 		vcc_pon = regulator_get(&pdev->dev, "vcc_pon");
 		if (IS_ERR(vcc_pon)) {
 			rc = PTR_ERR(vcc_pon);
-			pr_err("regulator get failed vcc_pon rc=%d\n", rc);
+			dev_err(&pdev->dev,
+				"regulator get failed vcc_pon rc=%d\n", rc);
 			goto sysfs_fail;
 		}
 		hap->vcc_pon = vcc_pon;
@@ -2506,8 +2444,7 @@ sysfs_fail:
 	timed_output_dev_unregister(&hap->timed_dev);
 timed_output_fail:
 	cancel_work_sync(&hap->work);
-	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq &&
-						!hap->lra_hw_auto_resonance)
+	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq)
 		hrtimer_cancel(&hap->auto_res_err_poll_timer);
 	hrtimer_cancel(&hap->hap_timer);
 	mutex_destroy(&hap->lock);
@@ -2526,8 +2463,7 @@ static int qpnp_haptic_remove(struct platform_device *pdev)
 				&qpnp_hap_attrs[i].attr);
 
 	cancel_work_sync(&hap->work);
-	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq &&
-						!hap->lra_hw_auto_resonance)
+	if (hap->act_type == QPNP_HAP_LRA && hap->correct_lra_drive_freq)
 		hrtimer_cancel(&hap->auto_res_err_poll_timer);
 	hrtimer_cancel(&hap->hap_timer);
 	timed_output_dev_unregister(&hap->timed_dev);
