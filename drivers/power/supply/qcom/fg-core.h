@@ -46,13 +46,10 @@
 			&& (value) <= (right)))
 
 /* Awake votable reasons */
-#define SRAM_READ		"fg_sram_read"
-#define SRAM_WRITE		"fg_sram_write"
-#define PROFILE_LOAD		"fg_profile_load"
-#define DELTA_SOC		"fg_delta_soc"
-
-/* Delta BSOC votable reasons */
-#define DELTA_BSOC_IRQ_VOTER	"fg_delta_bsoc_irq"
+#define SRAM_READ	"fg_sram_read"
+#define SRAM_WRITE	"fg_sram_write"
+#define PROFILE_LOAD	"fg_profile_load"
+#define DELTA_SOC	"fg_delta_soc"
 
 #define DEBUG_PRINT_BUFFER_SIZE		64
 /* 3 byte address + 1 space character */
@@ -354,7 +351,6 @@ struct fg_chip {
 	struct fg_memif		*sram;
 	struct fg_irq_info	*irqs;
 	struct votable		*awake_votable;
-	struct votable		*delta_bsoc_irq_en_votable;
 	struct fg_sram_param	*sp;
 	struct fg_alg_flag	*alg_flags;
 	int			*debug_mask;
@@ -389,6 +385,8 @@ struct fg_chip {
 	bool			profile_available;
 	bool			profile_loaded;
 	bool			battery_missing;
+/* david.liu@bsp, 20160926 Add dash charging */
+	bool			use_external_fg;
 	bool			fg_restarting;
 	bool			charge_full;
 	bool			recharge_soc_adjusted;
@@ -396,6 +394,7 @@ struct fg_chip {
 	bool			esr_fcc_ctrl_en;
 	bool			soc_reporting_ready;
 	bool			esr_flt_cold_temp_en;
+	bool			bsoc_delta_irq_en;
 	bool			slope_limit_en;
 	bool			use_ima_single_mode;
 	struct completion	soc_update;

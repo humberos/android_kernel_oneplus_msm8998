@@ -2371,7 +2371,6 @@ static int rmnet_ipa_ap_suspend(struct device *dev)
 	int ret;
 
 	IPAWANDBG("Enter...\n");
-
 	if (netdev == NULL) {
 		IPAWANERR("netdev is NULL.\n");
 		ret = 0;
